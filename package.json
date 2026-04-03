@@ -1,0 +1,124 @@
+{
+  "name": "next-api-layer",
+  "version": "0.1.5",
+  "description": "Production-grade API layer for Next.js with external JWT backend support",
+  "keywords": [
+    "nextjs",
+    "auth",
+    "jwt",
+    "external-backend",
+    "laravel",
+    "django",
+    "api-client",
+    "middleware",
+    "proxy"
+  ],
+  "author": "dijinar",
+  "license": "MIT",
+  "homepage": "https://next-api-layer.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dijinar/next-api-layer"
+  },
+  "bugs": {
+    "url": "https://github.com/dijinar/next-api-layer/issues"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "bin": {
+    "next-api-layer": "./dist/cli/init.js"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./api": {
+      "import": {
+        "types": "./dist/api.d.ts",
+        "default": "./dist/api.js"
+      },
+      "require": {
+        "types": "./dist/api.d.cts",
+        "default": "./dist/api.cjs"
+      }
+    },
+    "./client": {
+      "import": {
+        "types": "./dist/client.d.ts",
+        "default": "./dist/client.js"
+      },
+      "require": {
+        "types": "./dist/client.d.cts",
+        "default": "./dist/client.cjs"
+      }
+    },
+    "./server": {
+      "import": {
+        "types": "./dist/server.d.ts",
+        "default": "./dist/server.js"
+      },
+      "require": {
+        "types": "./dist/server.d.cts",
+        "default": "./dist/server.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup && tsup src/cli/init.ts --format esm --outDir dist/cli --no-splitting",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "next": ">=14.0.0",
+    "next-intl": ">=3.0.0",
+    "react": ">=18.0.0",
+    "react-dom": ">=18.0.0",
+    "swr": ">=2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "next-intl": {
+      "optional": true
+    },
+    "swr": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.9",
+    "@types/node": "^20.0.0",
+    "@types/prompts": "^2.4.9",
+    "@types/react": "^18.0.0",
+    "@vitest/coverage-v8": "^4.1.1",
+    "esbuild-visualizer": "^0.7.0",
+    "swr": "^2.4.1",
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^4.1.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "prompts": "^2.4.2"
+  }
+}
