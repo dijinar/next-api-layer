@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] - 2026-04-07
+
+### Added
+- **Per-request sanitization control**: New options in `RequestOptions` for fine-grained sanitization control
+  - `skipSanitize: boolean` - Skip all sanitization for a specific request
+  - `skipSanitizeFields: string[]` - Skip sanitization for specific fields only
+- `patch()` method now accepts `RequestOptions` parameter (was missing)
+
+### Example Usage
+```ts
+// Skip all sanitization for this request
+await api.post('admin/raw-html', body, { skipSanitize: true });
+
+// Skip specific fields only (content will not be sanitized)
+await api.post('blog/create', formData, {
+  isFormData: true,
+  skipSanitizeFields: ['content', 'raw_html']
+});
+
+// Works with patch too
+await api.patch('blog/update', body, { skipSanitizeFields: ['content'] });
+```
+
 ## [0.1.5] - 2026-04-04
 
 ### Added

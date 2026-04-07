@@ -148,31 +148,88 @@ export function createSanitizer(config?: SanitizationConfig) {
 
   /**
    * Main sanitize function
+   * @param data - Data to sanitize
+   * @param perRequestSkipFields - Additional fields to skip for this request only
    */
-  function sanitize<T>(data: T): T {
+  function sanitize<T>(data: T, perRequestSkipFields?: string[]): T {
     if (!enabled) {
       return data;
     }
-    return sanitizeValue(data) as T;
+    const allSkipFields = perRequestSkipFields 
+      ? [...skipFields, ...perRequestSkipFields]
+      : skipFields;
+    return sanitizeValueWithSkip(data, '', allSkipFields) as T;
+  }
+
+  /**
+   * Sanitize with custom skip fields
+   */
+  function sanitizeValueWithSkip(value: unknown, path: string, fieldsToSkip: string[]): unknown {
+    // Skip fields in skip list
+    if (fieldsToSkip.some(field => path.endsWith(field) || path === field)) {
+      return value;
+    }
+
+    // Null/undefined pass through
+    if (value === null || value === undefined) {
+      return value;
+    }
+
+    // Strings get sanitized
+    if (typeof value === 'string') {
+      return sanitizeString(value);
+    }
+
+    // Numbers, booleans pass through
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return value;
+    }
+
+    // Arrays - sanitize each element
+    if (Array.isArray(value)) {
+      return value.map((item, index) => sanitizeValueWithSkip(item, `${path}[${index}]`, fieldsToSkip));
+    }
+
+    // Objects - sanitize each property
+    if (typeof value === 'object') {
+      const sanitized: Record<string, unknown> = {};
+      for (const [key, val] of Object.entries(value)) {
+        const newPath = path ? `${path}.${key}` : key;
+        sanitized[key] = sanitizeValueWithSkip(val, newPath, fieldsToSkip);
+      }
+      return sanitized;
+    }
+
+    // Everything else passes through
+    return value;
   }
 
   /**
    * Sanitize FormData values (returns new FormData with sanitized values)
+   * @param formData - FormData to sanitize
+   * @param perRequestSkipFields - Additional fields to skip for this request only
    */
-  function sanitizeFormData(formData: FormData): FormData {
+  function sanitizeFormData(formData: FormData, perRequestSkipFields?: string[]): FormData {
     if (!enabled) {
       return formData;
     }
     
+    const allSkipFields = perRequestSkipFields 
+      ? [...skipFields, ...perRequestSkipFields]
+      : skipFields;
+    
     const sanitized = new FormData();
     
     for (const [key, value] of formData.entries()) {
+      // Check if this field should be skipped
+      const shouldSkip = allSkipFields.some(field => key === field || key.endsWith(field));
+      
       if (value instanceof File) {
         // Files pass through unchanged
         sanitized.append(key, value);
       } else if (typeof value === 'string') {
-        // Strings get sanitized
-        sanitized.append(key, sanitizeString(value));
+        // Strings get sanitized (unless skipped)
+        sanitized.append(key, shouldSkip ? value : sanitizeString(value));
       } else {
         // Everything else passes through
         sanitized.append(key, value);

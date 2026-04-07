@@ -49,13 +49,17 @@ export interface RequestOptions {
   methodSpoofing?: boolean;
   /** Skip authentication for this request */
   skipAuth?: boolean;
+  /** Skip all sanitization for this request */
+  skipSanitize?: boolean;
+  /** Skip sanitization for specific fields only */
+  skipSanitizeFields?: string[];
 }
 
 export interface ApiClient {
   get: (endpoint: string) => Promise<Response>;
   post: (endpoint: string, body?: Record<string, unknown> | FormData, options?: RequestOptions) => Promise<Response>;
   put: (endpoint: string, body?: Record<string, unknown> | FormData, options?: RequestOptions) => Promise<Response>;
-  patch: (endpoint: string, body?: Record<string, unknown>) => Promise<Response>;
+  patch: (endpoint: string, body?: Record<string, unknown>, options?: RequestOptions) => Promise<Response>;
   delete: (endpoint: string) => Promise<Response>;
 }
 
@@ -174,8 +178,12 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
       // Handle body
       if (body) {
         if (options.isFormData && body instanceof FormData) {
-          // FormData - sanitize and optionally add method spoofing
-          fetchBody = sanitizer.sanitizeFormData(body);
+          // FormData - sanitize (unless skipped) and optionally add method spoofing
+          if (options.skipSanitize) {
+            fetchBody = body;
+          } else {
+            fetchBody = sanitizer.sanitizeFormData(body, options.skipSanitizeFields);
+          }
           
           const useMethodSpoofing = options.methodSpoofing ?? globalMethodSpoofing;
           if (useMethodSpoofing && (method === 'PUT' || method === 'PATCH')) {
@@ -185,7 +193,11 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
         } else if (!(body instanceof FormData)) {
           // JSON body
           fetchHeaders['Content-Type'] = 'application/json';
-          fetchBody = JSON.stringify(sanitizer.sanitize(body));
+          if (options.skipSanitize) {
+            fetchBody = JSON.stringify(body);
+          } else {
+            fetchBody = JSON.stringify(sanitizer.sanitize(body, options.skipSanitizeFields));
+          }
         }
       }
 
@@ -227,8 +239,8 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
     put: (endpoint: string, body?: Record<string, unknown> | FormData, options?: RequestOptions) =>
       makeRequest('PUT', endpoint, body, options),
     
-    patch: (endpoint: string, body?: Record<string, unknown>) =>
-      makeRequest('PATCH', endpoint, body),
+    patch: (endpoint: string, body?: Record<string, unknown>, options?: RequestOptions) =>
+      makeRequest('PATCH', endpoint, body, options),
     
     delete: (endpoint: string) => makeRequest('DELETE', endpoint),
   };
