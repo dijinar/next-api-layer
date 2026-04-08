@@ -97,6 +97,11 @@ export interface I18nConfig {
   enabled: boolean;
   locales?: string[];
   defaultLocale?: string;
+  /** 
+   * next-intl or similar i18n middleware function
+   * Library will call this and merge responses to preserve headers
+   */
+  middleware?: (request: NextRequest) => NextResponse | Promise<NextResponse>;
 }
 
 // ==================== Proxy Config ====================

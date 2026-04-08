@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] - 2026-04-09
+
+### Added
+- **i18n Middleware Integration**: New `middleware` option in `I18nConfig` for seamless next-intl integration
+  - Library now handles i18n middleware internally and merges responses
+  - Critical headers (`x-locale`, `x-auth-user`, `x-refreshed-token`) are preserved across middleware chain
+  - No more header loss when using `afterAuth` hook with i18n middleware
+
+### Changed
+- Internal `applyAfterAuth` refactored to `applyMiddlewaresAndHooks` for better middleware composition
+- Added `mergeResponses` helper to preserve headers and cookies when chaining responses
+
+### Example Usage
+```ts
+import { createAuthProxy } from 'next-api-layer';
+import createIntlMiddleware from 'next-intl/middleware';
+import { routing } from '@/i18n/routing';
+
+const intlMiddleware = createIntlMiddleware(routing);
+
+export default createAuthProxy({
+  apiBaseUrl: process.env.API_BASE_URL!,
+  cookies: {
+    user: 'userAuthToken',
+    guest: 'guestAuthToken',
+  },
+  i18n: {
+    enabled: true,
+    locales: ['tr', 'en'],
+    defaultLocale: 'tr',
+    middleware: intlMiddleware, // Library handles merging
+  },
+});
+```
+
 ## [0.1.6] - 2026-04-07
 
 ### Added

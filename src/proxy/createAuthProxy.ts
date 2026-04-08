@@ -11,6 +11,32 @@ import { createHandlers } from './handlers';
 import { createCsrfValidator } from './csrf';
 import { createRateLimiter } from './rateLimit';
 import { createAuditLogger } from './audit';
+import { HEADERS } from '../shared/constants';
+
+/**
+ * Merge two NextResponse objects, preserving headers and cookies from both
+ * Target response takes priority for conflicts
+ */
+function mergeResponses(source: NextResponse, target: NextResponse): NextResponse {
+  // Copy critical headers from source to target (if not already set)
+  const criticalHeaders = [HEADERS.LOCALE, HEADERS.AUTH_USER, HEADERS.REFRESHED_TOKEN];
+  
+  for (const header of criticalHeaders) {
+    const value = source.headers.get(header);
+    if (value && !target.headers.has(header)) {
+      target.headers.set(header, value);
+    }
+  }
+  
+  // Copy cookies from source to target (if not already set)
+  source.cookies.getAll().forEach(cookie => {
+    if (!target.cookies.get(cookie.name)) {
+      target.cookies.set(cookie.name, cookie.value);
+    }
+  });
+  
+  return target;
+}
 
 /**
  * Creates an authentication proxy middleware for Next.js
@@ -124,7 +150,7 @@ export function createAuthProxy(userConfig: AuthProxyConfig) {
     // Skip excluded paths
     const excludedPaths = config.excludedPaths ?? [];
     if (excludedPaths.some(path => pathname.startsWith(path))) {
-      return applyAfterAuth(req, NextResponse.next(), { isAuthenticated: false, isGuest: false, tokenType: null, user: null });
+      return applyMiddlewaresAndHooks(req, NextResponse.next(), { isAuthenticated: false, isGuest: false, tokenType: null, user: null });
     }
 
     // Skip auth API endpoints (they handle their own auth)
@@ -137,7 +163,7 @@ export function createAuthProxy(userConfig: AuthProxyConfig) {
     ];
     
     if (authApiPaths.includes(pathname)) {
-      return applyAfterAuth(req, NextResponse.next(), { isAuthenticated: false, isGuest: false, tokenType: null, user: null });
+      return applyMiddlewaresAndHooks(req, NextResponse.next(), { isAuthenticated: false, isGuest: false, tokenType: null, user: null });
     }
 
     // Get tokens from cookies
@@ -150,7 +176,7 @@ export function createAuthProxy(userConfig: AuthProxyConfig) {
     if (!currentToken) {
       await audit.authFail(req, { reason: 'no-token' });
       const response = await handlers.handleNoToken(req, isApiRoute);
-      return applyAfterAuth(req, response, { isAuthenticated: false, isGuest: false, tokenType: null, user: null });
+      return applyMiddlewaresAndHooks(req, response, { isAuthenticated: false, isGuest: false, tokenType: null, user: null });
     }
 
     // Validate token
@@ -186,7 +212,7 @@ export function createAuthProxy(userConfig: AuthProxyConfig) {
     );
     
     // Apply CSRF cookie if enabled (for authenticated requests)
-    let finalResponse = await applyAfterAuth(req, response, authResult);
+    let finalResponse = await applyMiddlewaresAndHooks(req, response, authResult);
     
     if (config._resolved.csrf.enabled && authResult.isAuthenticated) {
       const sessionId = tokenInfo.userData?.id?.toString() || currentToken.slice(0, 32);
@@ -203,13 +229,27 @@ export function createAuthProxy(userConfig: AuthProxyConfig) {
   }
   
   /**
-   * Helper to apply afterAuth hook
+   * Helper to apply i18n middleware and afterAuth hook
+   * Merges responses to preserve critical headers (x-locale, x-auth-user, etc.)
    */
-  async function applyAfterAuth(req: NextRequest, response: NextResponse, authResult: AuthResult): Promise<NextResponse> {
-    if (config.afterAuth) {
-      return config.afterAuth(req, response, authResult);
+  async function applyMiddlewaresAndHooks(req: NextRequest, response: NextResponse, authResult: AuthResult): Promise<NextResponse> {
+    let finalResponse = response;
+    
+    // Apply i18n middleware if configured
+    if (config.i18n?.middleware) {
+      const intlResponse = await Promise.resolve(config.i18n.middleware(req));
+      // Merge library's response headers into i18n response
+      finalResponse = mergeResponses(response, intlResponse);
     }
-    return response;
+    
+    // Apply afterAuth hook if configured
+    if (config.afterAuth) {
+      const hookResponse = await config.afterAuth(req, finalResponse, authResult);
+      // Merge previous response headers into hook's response
+      finalResponse = mergeResponses(finalResponse, hookResponse);
+    }
+    
+    return finalResponse;
   }
 
   // Attach instances for debugging/testing
@@ -222,3 +262,4 @@ export function createAuthProxy(userConfig: AuthProxyConfig) {
 }
 
 export type AuthProxy = ReturnType<typeof createAuthProxy>;
+
