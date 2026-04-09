@@ -12,7 +12,7 @@ import type { TokenValidation } from './tokenValidation';
  * Extracts locale from pathname based on i18n config
  * e.g., /en/dashboard → 'en', /dashboard → defaultLocale or null
  */
-function extractLocale(pathname: string, i18n?: InternalProxyConfig['i18n']): string | null {
+export function extractLocale(pathname: string, i18n?: InternalProxyConfig['i18n']): string | null {
   if (!i18n?.enabled) return null;
   
   const locales = i18n.locales ?? [];

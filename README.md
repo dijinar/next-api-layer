@@ -150,8 +150,14 @@ const { data, success } = await api.get('users/profile');
 // POST with body
 const result = await api.post('projects', { body: { name: 'New Project' } });
 
-// Per-request skip (overrides global config)
+// Per-request sanitization control
 const rawHtml = await api.get('editor/content', { skipSanitize: true });
+
+// Skip specific fields only (sanitize others)
+const post = await api.post('blog/create', formData, {
+  isFormData: true,
+  skipSanitizeFields: ['content', 'raw_html'],
+});
 
 // With query params
 const users = await api.get('users', { params: { page: 1, limit: 20 } });
@@ -420,6 +426,13 @@ interface AuthProxyConfig {
     maxSize?: number;           // Default: 100 tokens
   };
   
+  i18n?: {
+    enabled?: boolean;          // Enable locale detection from URL
+    locales?: string[];         // Valid locale codes ['en', 'tr', 'ar']
+    defaultLocale?: string;     // Fallback locale
+    middleware?: (req: NextRequest) => NextResponse;  // i18n middleware (e.g., next-intl)
+  };
+  
   // ======== Composability Hooks ========
   
   // Runs BEFORE auth validation. Return NextResponse to bypass auth.
@@ -538,6 +551,13 @@ interface ApiClientConfig {
   
   methodSpoofing?: boolean;     // Default: false (for Laravel)
 }
+
+// Per-request options
+interface RequestOptions {
+  isFormData?: boolean;         // Send as FormData
+  skipSanitize?: boolean;       // Skip all sanitization for this request
+  skipSanitizeFields?: string[]; // Skip sanitization for specific fields
+}
 ```
 
 ## i18n Integration
@@ -595,7 +615,36 @@ Backend:      GET /api/posts?lang=tr
 
 ### With next-intl
 
-When using with next-intl, use `afterAuth` hook to combine both middlewares:
+The easiest way to integrate with next-intl is using the `middleware` option:
+
+```ts
+import { createAuthProxy } from 'next-api-layer';
+import createIntlMiddleware from 'next-intl/middleware';
+import { routing } from './i18n/routing';
+
+const intlMiddleware = createIntlMiddleware(routing);
+
+export default createAuthProxy({
+  apiBaseUrl: process.env.API_URL!,
+  cookies: { user: 'userToken', guest: 'guestToken' },
+  
+  i18n: {
+    enabled: true,
+    locales: ['en', 'tr', 'ar'],
+    defaultLocale: 'en',
+    middleware: intlMiddleware,  // Library handles response merging automatically
+  },
+});
+```
+
+The library automatically:
+- Calls your i18n middleware internally
+- Preserves `x-locale`, `x-auth-user`, and `x-refreshed-token` headers
+- Copies all auth cookies to the merged response
+
+#### Advanced: Manual Middleware Control
+
+If you need more control, use the `afterAuth` hook instead:
 
 ```ts
 import { createAuthProxy } from 'next-api-layer';

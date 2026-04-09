@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { AuthProxyConfig, AuthResult } from '../shared/types';
 import { resolveProxyConfig } from '../shared/config';
 import { createTokenValidation } from './tokenValidation';
-import { createHandlers } from './handlers';
+import { createHandlers, extractLocale } from './handlers';
 import { createCsrfValidator } from './csrf';
 import { createRateLimiter } from './rateLimit';
 import { createAuditLogger } from './audit';
@@ -240,6 +240,15 @@ export function createAuthProxy(userConfig: AuthProxyConfig) {
       const intlResponse = await Promise.resolve(config.i18n.middleware(req));
       // Merge library's response headers into i18n response
       finalResponse = mergeResponses(response, intlResponse);
+    }
+    
+    // Ensure x-locale is set as response header (not just request header)
+    // This is needed because intl middleware creates a new response that loses request headers
+    if (config.i18n?.enabled) {
+      const locale = extractLocale(req.nextUrl.pathname, config.i18n);
+      if (locale) {
+        finalResponse.headers.set(HEADERS.LOCALE, locale);
+      }
     }
     
     // Apply afterAuth hook if configured
