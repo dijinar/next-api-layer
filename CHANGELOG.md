@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.10] - 2026-04-10
+
+### Fixed
+- **login/register success detection**: `login()` and `register()` functions now correctly return `success: true` when API responds with success
+  - Previously returned `success: false` when response didn't include user data (e.g., `{ success: true, message: "..." }`)
+  - Now checks `res.ok && json.success !== false` instead of relying on user data presence
+  - User data is now optional - if not in response, library fetches from `/me` endpoint
+
+### Added
+- **parseAuthResponse prop**: New optional prop for custom login/register response parsing
+  - Allows handling non-standard backend auth response formats
+  - Example: `parseAuthResponse={(json) => ({ success: json.ok, user: json.result?.user })}`
+- **AuthResponseParsed type**: Exported from `next-api-layer/client` for TypeScript users
+
 ## [0.1.9] - 2026-04-10
 
 ### Fixed

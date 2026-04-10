@@ -46,6 +46,21 @@ export interface AuthResult<TUser = DefaultUserData> {
   errors?: Record<string, unknown>;
 }
 
+/**
+ * Return type for parseAuthResponse function.
+ * Used to parse login/register responses from different backend formats.
+ */
+export interface AuthResponseParsed<TUser = DefaultUserData> {
+  /** Whether the auth operation was successful */
+  success: boolean;
+  /** Optional message from the backend */
+  message?: string;
+  /** User data if available (optional - will be fetched from /me if not provided) */
+  user?: TUser | null;
+  /** Validation or other errors */
+  errors?: Record<string, unknown>;
+}
+
 export interface AuthProviderProps<TUser = DefaultUserData> {
   children: React.ReactNode;
   /** Initial user data from server (SSR) */
@@ -67,9 +82,25 @@ export interface AuthProviderProps<TUser = DefaultUserData> {
   isGuestFn?: (user: TUser | null) => boolean;
   /**
    * Function to parse API response and extract user data
+   * Used for /me endpoint responses
    * @default (response) => response.data || response.user || response
    */
   parseResponse?: (response: unknown) => TUser | null;
+  /**
+   * Function to parse login/register responses.
+   * Use this when your backend has a non-standard auth response format.
+   * If not provided, uses smart default: res.ok && json.success !== false
+   * 
+   * @example
+   * ```tsx
+   * parseAuthResponse={(json) => ({
+   *   success: json.ok === true,
+   *   user: json.result?.user,
+   *   message: json.message,
+   * })}
+   * ```
+   */
+  parseAuthResponse?: (response: unknown) => AuthResponseParsed<TUser>;
   /** SWR config overrides */
   swrConfig?: {
     refreshInterval?: number;

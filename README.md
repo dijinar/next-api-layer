@@ -729,6 +729,24 @@ React context provider for client-side auth state.
 </AuthProvider>
 ```
 
+#### Custom Auth Response Parsing
+
+For backends with non-standard auth response formats, use `parseAuthResponse`:
+
+```tsx
+<AuthProvider
+  // Standard props...
+  parseAuthResponse={(json) => ({
+    success: json.ok === true,          // Your success field
+    message: json.msg,                   // Your message field
+    user: json.result?.user,             // User data (optional)
+    errors: json.validation_errors,      // Error details (optional)
+  })}
+>
+  {children}
+</AuthProvider>
+```
+
 ### useAuth()
 
 Hook to access authentication state.

@@ -99,6 +99,7 @@ export function AuthProvider<TUser = DefaultUserData>({
   logoutRedirect,
   isGuestFn = defaultIsGuest,
   parseResponse = defaultParseResponse,
+  parseAuthResponse,
   swrConfig = {},
   onLogin,
   onLogout,
@@ -153,26 +154,53 @@ export function AuthProvider<TUser = DefaultUserData>({
       });
 
       const json = await res.json();
-      const userData = parseResponse(json);
 
-      if (userData) {
-        await mutate(userData, false);
-        onLogin?.(userData);
-        return { success: true, user: userData };
+      // Use custom parser if provided
+      if (parseAuthResponse) {
+        const parsed = parseAuthResponse(json);
+        if (parsed.success) {
+          if (parsed.user) {
+            await mutate(parsed.user, false);
+            onLogin?.(parsed.user);
+          } else {
+            // No user data, revalidate from /me endpoint
+            await mutate();
+          }
+          return { success: true, user: parsed.user ?? undefined, message: parsed.message };
+        }
+        return {
+          success: false,
+          message: parsed.message || 'Login failed',
+          errors: parsed.errors,
+        };
       }
 
-      const errorResponse = json as ApiResponse;
+      // Default behavior: check res.ok and json.success
+      const apiResponse = json as ApiResponse;
+      if (res.ok && apiResponse.success !== false) {
+        // Try to extract user data using parseResponse
+        const userData = parseResponse(json);
+        if (userData) {
+          await mutate(userData, false);
+          onLogin?.(userData);
+        } else {
+          // No user data in response, revalidate from /me endpoint
+          await mutate();
+        }
+        return { success: true, user: userData ?? undefined, message: apiResponse.message };
+      }
+
       return {
         success: false,
-        message: errorResponse.message || 'Login failed',
-        errors: errorResponse.errors,
+        message: apiResponse.message || 'Login failed',
+        errors: apiResponse.errors,
       };
     } catch (err) {
       const error = err instanceof Error ? err : new Error('Login failed');
       onError?.(error);
       return { success: false, message: error.message };
     }
-  }, [loginEndpoint, mutate, onLogin, onError, parseResponse]);
+  }, [loginEndpoint, mutate, onLogin, onError, parseResponse, parseAuthResponse]);
 
   // Register function
   const register = useCallback(async (data: RegisterData): Promise<AuthResult<TUser>> => {
@@ -184,26 +212,53 @@ export function AuthProvider<TUser = DefaultUserData>({
       });
 
       const json = await res.json();
-      const userData = parseResponse(json);
 
-      if (userData) {
-        await mutate(userData, false);
-        onLogin?.(userData);
-        return { success: true, user: userData };
+      // Use custom parser if provided
+      if (parseAuthResponse) {
+        const parsed = parseAuthResponse(json);
+        if (parsed.success) {
+          if (parsed.user) {
+            await mutate(parsed.user, false);
+            onLogin?.(parsed.user);
+          } else {
+            // No user data, revalidate from /me endpoint
+            await mutate();
+          }
+          return { success: true, user: parsed.user ?? undefined, message: parsed.message };
+        }
+        return {
+          success: false,
+          message: parsed.message || 'Registration failed',
+          errors: parsed.errors,
+        };
       }
 
-      const errorResponse = json as ApiResponse;
+      // Default behavior: check res.ok and json.success
+      const apiResponse = json as ApiResponse;
+      if (res.ok && apiResponse.success !== false) {
+        // Try to extract user data using parseResponse
+        const userData = parseResponse(json);
+        if (userData) {
+          await mutate(userData, false);
+          onLogin?.(userData);
+        } else {
+          // No user data in response, revalidate from /me endpoint
+          await mutate();
+        }
+        return { success: true, user: userData ?? undefined, message: apiResponse.message };
+      }
+
       return {
         success: false,
-        message: errorResponse.message || 'Registration failed',
-        errors: errorResponse.errors,
+        message: apiResponse.message || 'Registration failed',
+        errors: apiResponse.errors,
       };
     } catch (err) {
       const error = err instanceof Error ? err : new Error('Registration failed');
       onError?.(error);
       return { success: false, message: error.message };
     }
-  }, [registerEndpoint, mutate, onLogin, onError, parseResponse]);
+  }, [registerEndpoint, mutate, onLogin, onError, parseResponse, parseAuthResponse]);
 
   // Logout function
   const logout = useCallback(async (): Promise<void> => {

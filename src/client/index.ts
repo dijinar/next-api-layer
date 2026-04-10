@@ -28,6 +28,7 @@ export type {
   AuthContextValue,
   AuthProviderProps,
   AuthResult,
+  AuthResponseParsed,
   // Non-generic types
   LoginCredentials,
   RegisterData,
