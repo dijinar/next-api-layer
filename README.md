@@ -419,6 +419,8 @@ interface AuthProxyConfig {
     protectedRoutes?: string[]; // Routes requiring auth
     authRoutes?: string[];      // Routes for non-auth users (login, register)
     publicRoutes?: string[];    // Completely public routes
+    // Note: Locale prefix is automatically stripped before matching
+    // e.g., '/tr/login' matches config '/login' when i18n is enabled
   };
   
   cache?: {
@@ -611,6 +613,30 @@ Route Handler: await api.get('posts')
 API Client:   Reads x-locale header → Appends ?lang=tr
    ↓
 Backend:      GET /api/posts?lang=tr
+```
+
+### Route Matching with Locale Prefix
+
+When using `localePrefix: 'always'` (e.g., with next-intl), the library automatically strips the locale prefix before matching routes:
+
+```ts
+createAuthProxy({
+  // ...
+  access: {
+    protectedRoutes: ['/dashboard', '/profile'],
+    authRoutes: ['/login', '/register'],
+  },
+  i18n: {
+    enabled: true,
+    locales: ['en', 'tr'],
+    defaultLocale: 'en',
+  },
+});
+
+// These all match correctly:
+// /login        → matches authRoutes '/login'
+// /tr/login     → matches authRoutes '/login' (locale stripped)
+// /en/dashboard → matches protectedRoutes '/dashboard' (locale stripped)
 ```
 
 ### With next-intl

@@ -32,6 +32,26 @@ export function extractLocale(pathname: string, i18n?: InternalProxyConfig['i18n
 }
 
 /**
+ * Strips locale prefix from pathname for route matching
+ * e.g., /tr/giris → /giris, /en/dashboard → /dashboard
+ */
+export function stripLocale(pathname: string, i18n?: InternalProxyConfig['i18n']): string {
+  if (!i18n?.enabled) return pathname;
+  
+  const locales = i18n.locales ?? [];
+  const segments = pathname.split('/').filter(Boolean);
+  const firstSegment = segments[0];
+  
+  // If first segment is a valid locale, strip it
+  if (firstSegment && locales.includes(firstSegment)) {
+    const strippedPath = '/' + segments.slice(1).join('/');
+    return strippedPath || '/';
+  }
+  
+  return pathname;
+}
+
+/**
  * Creates proxy handlers
  */
 export function createHandlers(
@@ -74,9 +94,10 @@ export function createHandlers(
    * Checks if pathname is an auth page
    */
   function isAuthPage(pathname: string): boolean {
+    const cleanPath = stripLocale(pathname, i18n);
     const authRoutes = access?.authRoutes ?? [];
     return authRoutes.some(route => 
-      pathname === route || pathname.startsWith(`${route}/`)
+      cleanPath === route || cleanPath.startsWith(`${route}/`)
     );
   }
 
@@ -84,6 +105,8 @@ export function createHandlers(
    * Checks if pathname is a protected route
    */
   function isProtectedRoute(pathname: string): boolean {
+    const cleanPath = stripLocale(pathname, i18n);
+    
     // If protectedByDefault is true, everything is protected except public/auth routes
     if (access?.protectedByDefault) {
       return !isPublicRoute(pathname) && !isAuthPage(pathname);
@@ -91,7 +114,7 @@ export function createHandlers(
     
     const protectedRoutes = access?.protectedRoutes ?? [];
     return protectedRoutes.some(route => 
-      pathname === route || pathname.startsWith(`${route}/`)
+      cleanPath === route || cleanPath.startsWith(`${route}/`)
     );
   }
 
@@ -99,9 +122,10 @@ export function createHandlers(
    * Checks if pathname is explicitly public
    */
   function isPublicRoute(pathname: string): boolean {
+    const cleanPath = stripLocale(pathname, i18n);
     const publicRoutes = access?.publicRoutes ?? [];
     return publicRoutes.some(route => 
-      pathname === route || pathname.startsWith(`${route}/`)
+      cleanPath === route || cleanPath.startsWith(`${route}/`)
     );
   }
 
