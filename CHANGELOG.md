@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.11] - 2026-04-13
+
+### Fixed
+- **Non-ASCII characters in x-auth-user header**: User data with Turkish (ğ, ş, ı, ö, ü, ç), German (ä, ö, ü, ß), or other non-ASCII characters now works correctly
+  - HTTP headers only support ISO-8859-1 (0-255), characters like `ğ` (287) caused `TypeError: Cannot convert argument to a ByteString`
+  - User data is now Base64 encoded in proxy and decoded in `getServerUser()`
+  - This is an internal change - no API changes required
+
 ## [0.1.10] - 2026-04-10
 
 ### Fixed

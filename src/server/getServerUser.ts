@@ -118,7 +118,9 @@ export async function getServerUser<TUser = unknown>(
       const userHeader = headersList.get(HEADERS.AUTH_USER);
       
       if (userHeader) {
-        const userData = JSON.parse(userHeader) as TUser;
+        // Decode Base64 (proxy encodes to handle non-ASCII chars like Turkish ğ, ş, ı)
+        const decodedJson = Buffer.from(userHeader, 'base64').toString('utf-8');
+        const userData = JSON.parse(decodedJson) as TUser;
         const isGuest = isGuestFn(userData);
         
         // Get token from cookies for completeness

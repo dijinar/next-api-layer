@@ -217,7 +217,8 @@ export function createHandlers(
             const requestHeaders = new Headers(req.headers);
             
             if (newTokenInfo.userData) {
-              requestHeaders.set(HEADERS.AUTH_USER, JSON.stringify(newTokenInfo.userData));
+              // Base64 encode to handle non-ASCII characters (Turkish, etc.) in HTTP headers
+              requestHeaders.set(HEADERS.AUTH_USER, Buffer.from(JSON.stringify(newTokenInfo.userData)).toString('base64'));
             }
             requestHeaders.set(HEADERS.REFRESHED_TOKEN, refreshResult.newToken);
             
@@ -267,7 +268,8 @@ export function createHandlers(
     const requestHeaders = new Headers(req.headers);
     
     if (userData) {
-      requestHeaders.set(HEADERS.AUTH_USER, JSON.stringify(userData));
+      // Base64 encode to handle non-ASCII characters (Turkish, etc.) in HTTP headers
+      requestHeaders.set(HEADERS.AUTH_USER, Buffer.from(JSON.stringify(userData)).toString('base64'));
     }
     
     // Set locale header if i18n is enabled
