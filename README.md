@@ -32,10 +32,10 @@ yarn add next-api-layer
 
 ## Quick Start
 
-### 1. Create the Auth Proxy (Middleware)
+### 1. Create the Auth Proxy
 
 ```ts
-// middleware.ts
+// proxy.ts (Next.js 16+) or middleware.ts (Next.js 14-15)
 import { createAuthProxy } from 'next-api-layer';
 
 const authProxy = createAuthProxy({
@@ -57,7 +57,11 @@ const authProxy = createAuthProxy({
   },
 });
 
-export default authProxy;
+// Next.js 16+
+export const proxy = authProxy;
+
+// Next.js 14-15 (use this instead):
+// export default authProxy;
 
 export const config = {
   matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
@@ -66,10 +70,10 @@ export const config = {
 
 #### Custom Middleware (Composable)
 
-Kendi middleware lojiğinizi eklemek istiyorsanız `beforeAuth` ve `afterAuth` hook'larını kullanabilirsiniz:
+To add your own middleware logic, use the `beforeAuth` and `afterAuth` hooks:
 
 ```ts
-// middleware.ts
+// proxy.ts (Next.js 16+) or middleware.ts (Next.js 14-15)
 import { createAuthProxy } from 'next-api-layer';
 import { NextRequest, NextResponse } from 'next/server';
 
@@ -80,7 +84,7 @@ const authProxy = createAuthProxy({
     guest: 'guestAuthToken',
   },
   
-  // Auth kontrolünden ÖNCE çalışır
+  // Runs BEFORE auth validation
   beforeAuth: async (req: NextRequest) => {
     const { pathname } = req.nextUrl;
     
@@ -97,16 +101,16 @@ const authProxy = createAuthProxy({
     // Logging
     console.log(`[${new Date().toISOString()}] ${req.method} ${pathname}`);
     
-    // null döndür = auth kontrolüne devam et
+    // Return null to continue with auth
     return null;
   },
   
-  // Auth kontrolünden SONRA çalışır
+  // Runs AFTER auth validation
   afterAuth: async (req, response, authResult) => {
-    // Custom header ekle
+    // Add custom header
     response.headers.set('x-auth-status', authResult.isAuthenticated ? 'authenticated' : 'guest');
     
-    // Admin kontrolü
+    // Admin access control
     if (req.nextUrl.pathname.startsWith('/admin') && authResult.user?.role !== 'admin') {
       return NextResponse.redirect(new URL('/403', req.url));
     }
@@ -115,7 +119,11 @@ const authProxy = createAuthProxy({
   },
 });
 
-export default authProxy;
+// Next.js 16+
+export const proxy = authProxy;
+
+// Next.js 14-15 (use this instead):
+// export default authProxy;
 ```
 
 ### 2. Create the API Client
@@ -136,7 +144,31 @@ export const api = createApiClient({
     enabled: true,
     paramName: 'lang',
   },
-  methodSpoofing: true, // For Laravel PUT/PATCH support
+  
+  // Method spoofing for Laravel PUT/PATCH/DELETE support
+  methodSpoofing: true,
+  // Or with advanced config:
+  // methodSpoofing: {
+  //   enabled: true,
+  //   strategy: 'body',   // 'body' (default) or 'header'
+  //   fieldName: '_method', // Default: '_method'
+  // },
+  
+  // Request timeout (default: 30000ms)
+  timeout: 30000,
+  
+  // Default headers for all requests
+  defaultHeaders: {
+    'X-Requested-With': 'XMLHttpRequest',
+  },
+  
+  // Custom error messages
+  errorMessages: {
+    noToken: 'Authentication required',
+    connectionError: 'Connection failed',
+    serverError: 'Server error occurred',
+    timeout: 'Request timed out',
+  },
 });
 ```
 
@@ -161,6 +193,12 @@ const post = await api.post('blog/create', formData, {
 
 // With query params
 const users = await api.get('users', { params: { page: 1, limit: 20 } });
+
+// Per-request timeout (overrides global)
+const quickCheck = await api.get('health', { timeout: 5000 });
+
+// Override method spoofing per-request
+await api.put('resource/1', { body: data }, { methodSpoofing: false });
 ```
 
 ### 3. Setup Auth Provider (Client-Side)
@@ -177,7 +215,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
       userEndpoint="/api/auth/me"
       loginEndpoint="/api/auth/login"
       logoutEndpoint="/api/auth/logout"
-      swrConfig={{ revalidateOnFocus: true }}
+      swrConfig={{
+        revalidateOnFocus: true,
+        refreshInterval: 0,
+        // Full SWRConfiguration supported - see swr.vercel.app/docs/api
+      }}
     >
       {children}
     </AuthProvider>
@@ -455,7 +497,7 @@ interface AuthResult {
 
 ### Different Backend Formats
 
-Backend'iniz farklı response formatı dönüyorsa `responseMappers` ile uyumlu hale getirebilirsiniz:
+If your backend returns a different response format, use `responseMappers` for compatibility:
 
 ```ts
 // Laravel (default format - no mapping needed)
@@ -551,7 +593,61 @@ interface ApiClientConfig {
     defaultLocale?: string;     // Fallback locale
   };
   
-  methodSpoofing?: boolean;     // Default: false (for Laravel)
+  // Method spoofing for Laravel PUT/PATCH/DELETE
+  methodSpoofing?: boolean | {
+    enabled: boolean;
+    strategy?: 'body' | 'header'; // Default: 'body'
+    fieldName?: string;           // Default: '_method'
+  };
+  
+  // Request timeout in milliseconds (default: 30000)
+  timeout?: number;
+  
+  // Default headers for all requests
+  defaultHeaders?: Record<string, string>;
+  
+  // Retry configuration for failed requests
+  retry?: {
+    enabled: boolean;
+    maxAttempts?: number;         // Default: 3
+    backoff?: 'exponential' | 'linear' | 'fixed';  // Default: 'exponential'
+    backoffMs?: number;           // Default: 1000
+    retryOn?: number[];           // Default: [408, 429, 500, 502, 503, 504]
+    retryOnNetworkError?: boolean; // Default: true
+  };
+  
+  // Debug logging for development
+  debug?: {
+    enabled: boolean;
+    logRequests?: boolean;        // Default: true
+    logResponses?: boolean;       // Default: true
+    logTiming?: boolean;          // Default: true
+    logHeaders?: boolean;         // Default: false
+    logBody?: boolean;            // Default: false
+    bodyPreviewLength?: number;   // Default: 200
+    logger?: (message: string, data?: Record<string, unknown>) => void;
+  };
+  
+  // Request deduplication
+  dedupe?: {
+    enabled: boolean;
+    methods?: string[];           // Default: ['GET']
+  };
+  
+  // Request ID for tracing
+  requestId?: {
+    enabled: boolean;
+    headerName?: string;          // Default: 'X-Request-ID'
+    generator?: () => string;     // Default: crypto.randomUUID
+  };
+  
+  // Custom error messages
+  errorMessages?: {
+    noToken?: string;           // When no token available
+    connectionError?: string;   // When request fails
+    serverError?: string;       // When 5xx response
+    timeout?: string;           // When request times out
+  };
 }
 
 // Per-request options
@@ -559,7 +655,150 @@ interface RequestOptions {
   isFormData?: boolean;         // Send as FormData
   skipSanitize?: boolean;       // Skip all sanitization for this request
   skipSanitizeFields?: string[]; // Skip sanitization for specific fields
+  skipAuth?: boolean;           // Skip authentication for this request
+  timeout?: number;             // Override global timeout
+  methodSpoofing?: boolean;     // Override global method spoofing
+  retry?: boolean | RetryConfig; // Override retry settings
+  dedupe?: boolean;             // Override deduplication
+  requestId?: string | boolean; // Custom/auto request ID
 }
+```
+
+### Error Classes
+
+Typed error classes for better error handling:
+
+```ts
+import { 
+  isHttpError, 
+  isTimeoutError, 
+  isNetworkError,
+  isAuthError,
+  isRateLimitError,
+  isRetryableError 
+} from 'next-api-layer';
+
+try {
+  const res = await api.get('some/endpoint');
+  // ...
+} catch (error) {
+  if (isTimeoutError(error)) {
+    console.log(`Request to ${error.endpoint} timed out after ${error.timeoutMs}ms`);
+  } else if (isNetworkError(error)) {
+    console.log('Network error:', error.cause?.message);
+  } else if (isAuthError(error)) {
+    console.log('Auth error:', error.reason); // 'no_token' | 'invalid_token' | 'expired_token'
+  } else if (isRateLimitError(error)) {
+    console.log(`Rate limited. Retry after ${error.retryAfter} seconds`);
+  } else if (isHttpError(error)) {
+    console.log(`HTTP ${error.status}: ${error.message}`);
+  }
+  
+  // Check if error is retryable
+  if (isRetryableError(error)) {
+    // Perform retry logic...
+  }
+}
+```
+
+**Available Error Classes:**
+- `ApiError` - Base error with `code` and `timestamp`
+- `HttpError` - HTTP errors with `status`, `statusText`, `isClientError`, `isServerError`
+- `TimeoutError` - Request timeout with `endpoint`, `timeoutMs`
+- `NetworkError` - Network failures with `endpoint`, `cause`
+- `AuthError` - Authentication errors with `reason`
+- `ValidationError` - Validation errors with `endpoint`, `errors`, `allMessages`, `firstMessage`
+- `RateLimitError` - Rate limiting with `retryAfter`, `limit`, `remaining`
+
+### Retry Configuration
+
+Automatic retry for failed requests:
+
+```ts
+const api = createApiClient({
+  // ...base config
+  
+  retry: {
+    enabled: true,
+    maxAttempts: 3,
+    backoff: 'exponential',  // 1s, 2s, 4s...
+    backoffMs: 1000,
+    retryOn: [500, 502, 503, 504],
+    retryOnNetworkError: true,
+  },
+});
+
+// Per-request override
+await api.get('flaky-endpoint', { retry: { maxAttempts: 5 } });
+await api.post('important-action', undefined, { retry: false }); // Disable
+```
+
+### Debug Mode
+
+Development logging for requests/responses:
+
+```ts
+const api = createApiClient({
+  // ...base config
+  
+  debug: {
+    enabled: process.env.NODE_ENV === 'development',
+    logRequests: true,
+    logResponses: true,
+    logTiming: true,
+    logHeaders: false,  // Careful with sensitive headers
+    logBody: false,     // Careful with sensitive data
+    bodyPreviewLength: 200,
+  },
+});
+
+// Output:
+// [API] → GET /users { method: 'GET', url: '...', timeout: 30000 }
+// [API] ← GET /users 200 { status: 200, duration: 45, size: 1234 }
+```
+
+### Request Deduplication
+
+Prevent duplicate in-flight requests:
+
+```ts
+const api = createApiClient({
+  // ...base config
+  
+  dedupe: {
+    enabled: true,
+    methods: ['GET'],  // Only dedupe GET requests
+  },
+});
+
+// Both calls return same promise (only 1 actual request)
+const [users1, users2] = await Promise.all([
+  api.get('users'),
+  api.get('users'),
+]);
+
+// Force fresh request
+await api.get('users', { dedupe: false });
+```
+
+### Request ID / Correlation
+
+Add tracing headers to requests:
+
+```ts
+const api = createApiClient({
+  // ...base config
+  
+  requestId: {
+    enabled: true,
+    headerName: 'X-Request-ID',  // or 'X-Correlation-ID'
+    generator: () => crypto.randomUUID(),
+  },
+});
+
+// Per-request
+await api.get('users', { requestId: true });          // Auto-generate
+await api.get('users', { requestId: 'my-trace-123' }); // Custom ID
 ```
 
 ## i18n Integration
@@ -575,8 +814,8 @@ Automatic locale detection and injection for multilingual applications.
 ### Configuration
 
 ```ts
-// middleware.ts - Proxy config
-createAuthProxy({
+// proxy.ts (Next.js 16+) or middleware.ts (Next.js 14-15)
+const authProxy = createAuthProxy({
   apiBaseUrl: process.env.API_BASE_URL!,
   cookies: { user: 'userToken', guest: 'guestToken' },
   
@@ -716,11 +955,19 @@ export default createAuthProxy({
 React context provider for client-side auth state.
 
 ```tsx
+import type { SWRConfiguration } from 'swr';
+
 <AuthProvider
   userEndpoint="/api/auth/me"
   loginEndpoint="/api/auth/login"
   logoutEndpoint="/api/auth/logout"
-  swrConfig={{ refreshInterval: 0 }}
+  logoutRedirect="/login"          // Redirect after logout
+  swrConfig={{
+    refreshInterval: 0,
+    revalidateOnFocus: true,
+    revalidateOnReconnect: true,
+    // Full SWRConfiguration type supported
+  } as SWRConfiguration}
   onLogin={(user) => console.log('Logged in:', user)}
   onLogout={() => console.log('Logged out')}
   onError={(error) => console.error(error)}
@@ -778,17 +1025,17 @@ const { user, isAuthenticated, isGuest, token } = await getServerUser({
 
 ## Public API / Skip Auth
 
-Bazı endpoint'ler (haber siteleri, public içerikler) authentication gerektirmez. Bu durumlar için `skipAuth` özelliğini kullanabilirsiniz:
+Some endpoints (news sites, public content) don't require authentication. Use `skipAuth` for these cases:
 
 ### Global Config
 
 ```ts
 const api = createApiClient({
   auth: {
-    // Bu pattern'lere uyan endpoint'ler token göndermez
+    // Endpoints matching these patterns won't send tokens
     publicEndpoints: ['news/*', 'categories', 'public/**'],
     
-    // Opsiyonel: Tüm endpoint'ler default olarak public olsun
+    // Optional: Make all endpoints public by default
     // skipByDefault: true,
   },
 });
@@ -797,16 +1044,16 @@ const api = createApiClient({
 ### Per-Request Override
 
 ```ts
-// Pattern'e uysa bile token gönder
+// Send token even if pattern matches
 await api.get('news/premium-article', { skipAuth: false });
 
-// Pattern'e uymasa bile token gönderme
+// Don't send token even if pattern doesn't match
 await api.get('some-endpoint', { skipAuth: true });
 ```
 
 ### Route Handler (createProxyHandler)
 
-API route handler'ınızda `createProxyHandler` kullanarak backend'e proxy yapabilirsiniz:
+Use `createProxyHandler` in your API route handlers to proxy requests to your backend:
 
 ```ts
 // app/api/[...path]/route.ts
@@ -827,6 +1074,8 @@ export const DELETE = handler;
 ## Peer Dependencies
 
 - `next` >= 14.0.0
+  - **Next.js 16+**: Use `proxy.ts` with `export const proxy = authProxy`
+  - **Next.js 14-15**: Use `middleware.ts` with `export default authProxy`
 - `react` >= 18.0.0
 - `swr` >= 2.0.0 (optional, for client module)
 - `next-intl` >= 3.0.0 (optional, for i18n)

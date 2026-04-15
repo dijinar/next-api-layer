@@ -18,28 +18,28 @@ import type {
 const defaultMappers: Required<ResponseMappers> = {
   // Default: { success: true, data: { type, exp, ...user } }
   parseAuthMe: (response: unknown): TokenInfo | null => {
-    const res = response as AuthMeResponse | null;
-    if (!res?.success || !res?.data) {
+    const authMeResponse = response as AuthMeResponse | null;
+    if (!authMeResponse?.success || !authMeResponse?.data) {
       return null;
     }
     return {
       isValid: true,
-      tokenType: res.data.type || 'user',
-      exp: res.data.exp || null,
-      userData: res.data,
+      tokenType: authMeResponse.data.type || 'user',
+      exp: authMeResponse.data.exp || null,
+      userData: authMeResponse.data,
     };
   },
   
   // Default: { success: true, data: { accessToken } }
   parseRefreshToken: (response: unknown): string | null => {
-    const res = response as GuestTokenResponse | null;
-    return res?.success && res?.data?.accessToken ? res.data.accessToken : null;
+    const refreshResponse = response as GuestTokenResponse | null;
+    return refreshResponse?.success && refreshResponse?.data?.accessToken ? refreshResponse.data.accessToken : null;
   },
   
   // Default: { success: true, data: { accessToken } }
   parseGuestToken: (response: unknown): string | null => {
-    const res = response as GuestTokenResponse | null;
-    return res?.data?.accessToken || null;
+    const guestResponse = response as GuestTokenResponse | null;
+    return guestResponse?.data?.accessToken || null;
   },
 };
 
@@ -66,7 +66,7 @@ export function createTokenValidation(
     const invalidResult: TokenInfo = { isValid: false, tokenType: null, exp: null, userData: null };
     
     try {
-      const res = await fetch(`${apiBaseUrl}${endpoints.validate}`, {
+      const validateResponse = await fetch(`${apiBaseUrl}${endpoints.validate}`, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
@@ -74,11 +74,11 @@ export function createTokenValidation(
         cache: 'no-store',
       });
 
-      if (!res.ok) {
+      if (!validateResponse.ok) {
         return invalidResult;
       }
 
-      const rawResponse: unknown = await res.json().catch(() => null);
+      const rawResponse: unknown = await validateResponse.json().catch(() => null);
       
       // Use custom or default mapper
       const parsed = mappers.parseAuthMe(rawResponse);
@@ -105,7 +105,7 @@ export function createTokenValidation(
    */
   async function refreshToken(oldToken: string): Promise<RefreshResult> {
     try {
-      const res = await fetch(`${apiBaseUrl}${endpoints.refresh}`, {
+      const refreshResponse = await fetch(`${apiBaseUrl}${endpoints.refresh}`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${oldToken}`,
@@ -114,11 +114,11 @@ export function createTokenValidation(
         cache: 'no-store',
       });
 
-      if (!res.ok) {
+      if (!refreshResponse.ok) {
         return { success: false, newToken: null };
       }
 
-      const rawResponse: unknown = await res.json().catch(() => null);
+      const rawResponse: unknown = await refreshResponse.json().catch(() => null);
       
       // Use custom or default mapper
       const newToken = mappers.parseRefreshToken(rawResponse);
@@ -144,7 +144,7 @@ export function createTokenValidation(
     }
 
     try {
-      const res = await fetch(`${apiBaseUrl}${endpoints.guest}`, {
+      const guestResponse = await fetch(`${apiBaseUrl}${endpoints.guest}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -154,11 +154,11 @@ export function createTokenValidation(
         cache: 'no-store',
       });
 
-      if (!res.ok) {
+      if (!guestResponse.ok) {
         return null;
       }
 
-      const rawResponse: unknown = await res.json().catch(() => null);
+      const rawResponse: unknown = await guestResponse.json().catch(() => null);
       
       // Use custom or default mapper
       return mappers.parseGuestToken(rawResponse);

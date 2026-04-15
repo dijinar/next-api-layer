@@ -41,10 +41,10 @@ function generateCsrfSecret(): string {
  */
 function defaultRateLimitKeyFn(req: NextRequest): string {
   const forwarded = req.headers.get('x-forwarded-for');
-  const ip = forwarded?.split(',')[0]?.trim() || 
-             req.headers.get('x-real-ip') || 
-             'unknown';
-  return `rl:${ip}`;
+  const clientIpAddress = forwarded?.split(',')[0]?.trim() || 
+                          req.headers.get('x-real-ip') || 
+                          'unknown';
+  return `rl:${clientIpAddress}`;
 }
 
 /**
@@ -84,7 +84,9 @@ export function resolveProxyConfig(config: AuthProxyConfig): InternalProxyConfig
     secret: config.csrf?.secret ?? generateCsrfSecret(),
     cookieName: config.csrf?.cookieName ?? DEFAULT_CSRF_CONFIG.cookieName,
     headerName: config.csrf?.headerName ?? DEFAULT_CSRF_CONFIG.headerName,
-    ignoreMethods: config.csrf?.ignoreMethods ?? DEFAULT_CSRF_CONFIG.ignoreMethods,
+    ignoreMethods: config.csrf?.ignoreMethods 
+      ? [...config.csrf.ignoreMethods] 
+      : [...DEFAULT_CSRF_CONFIG.ignoreMethods],
     trustSameSite: config.csrf?.trustSameSite ?? DEFAULT_CSRF_CONFIG.trustSameSite,
   };
 
@@ -141,8 +143,8 @@ export function resolveApiClientConfig(config: ApiClientConfig = {}) {
     },
     methodSpoofing: config.methodSpoofing ?? false,
     errorMessages: {
-      noToken: config.errorMessages?.noToken ?? 'Token bulunamadı.',
-      connectionError: config.errorMessages?.connectionError ?? 'Bağlantı hatası oluştu.',
+      noToken: config.errorMessages?.noToken ?? 'Token not found.',
+      connectionError: config.errorMessages?.connectionError ?? 'Connection error occurred.',
     },
   };
 }

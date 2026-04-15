@@ -2,6 +2,8 @@
  * Client-side types - Generic for any backend format
  */
 
+import type { SWRConfiguration } from 'swr';
+
 // ==================== Base Types ====================
 
 /** Default user data structure (can be overridden with generics) */
@@ -101,12 +103,11 @@ export interface AuthProviderProps<TUser = DefaultUserData> {
    * ```
    */
   parseAuthResponse?: (response: unknown) => AuthResponseParsed<TUser>;
-  /** SWR config overrides */
-  swrConfig?: {
-    refreshInterval?: number;
-    revalidateOnFocus?: boolean;
-    revalidateOnReconnect?: boolean;
-  };
+  /** 
+   * SWR configuration overrides
+   * @see https://swr.vercel.app/docs/api#options
+   */
+  swrConfig?: SWRConfiguration;
   /** Called when user logs in */
   onLogin?: (user: TUser) => void;
   /** Called when user logs out */

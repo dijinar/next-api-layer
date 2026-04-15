@@ -206,7 +206,7 @@ async function computeHmac(
     const keyData = encoder.encode(secret);
     const messageData = encoder.encode(message);
     
-    const key = await crypto.subtle.importKey(
+    const hmacKey = await crypto.subtle.importKey(
       'raw',
       keyData,
       { name: 'HMAC', hash: 'SHA-256' },
@@ -214,7 +214,7 @@ async function computeHmac(
       ['sign']
     );
     
-    const signature = await crypto.subtle.sign('HMAC', key, messageData);
+    const signature = await crypto.subtle.sign('HMAC', hmacKey, messageData);
     return Array.from(new Uint8Array(signature), b => 
       b.toString(16).padStart(2, '0')
     ).join('');
@@ -222,9 +222,9 @@ async function computeHmac(
   
   // Fallback (less secure)
   let hash = 0;
-  const str = secret + message;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
+  const hashInput = secret + message;
+  for (let i = 0; i < hashInput.length; i++) {
+    const char = hashInput.charCodeAt(i);
     hash = ((hash << 5) - hash) + char;
     hash = hash & hash;
   }

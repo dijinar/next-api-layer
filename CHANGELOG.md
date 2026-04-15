@@ -5,6 +5,81 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-04-15
+
+### Added
+- **Typed Error Classes**: New error hierarchy for better error handling
+  - `ApiError` - Base error class with code and timestamp
+  - `HttpError` - HTTP errors with status code and statusText
+  - `TimeoutError` - Request timeout errors with endpoint and timeout info
+  - `NetworkError` - Network failures with cause tracking
+  - `AuthError` - Authentication errors with reason (no_token, invalid_token, expired_token)
+  - `ValidationError` - Validation errors with field-level error messages
+  - `RateLimitError` - Rate limit errors with retryAfter, limit, remaining info
+  - Type guards: `isApiError()`, `isHttpError()`, `isTimeoutError()`, `isNetworkError()`, `isAuthError()`, `isRateLimitError()`
+  - Utilities: `isRetryableStatus()`, `isRetryableError()`
+
+- **Retry Logic**: Automatic retry for failed requests
+  - `createApiClient({ retry: { enabled: true, maxAttempts: 3 } })`
+  - Backoff strategies: `'exponential'`, `'linear'`, `'fixed'`
+  - Configurable retry conditions: status codes, network errors
+  - Per-request override: `api.get('/endpoint', { retry: false })`
+
+- **Debug Mode**: Development logging for requests/responses
+  - `createApiClient({ debug: { enabled: true } })`
+  - Log requests, responses, timing, headers, body preview
+  - Custom logger support: `debug: { logger: (msg, data) => ... }`
+
+- **Request Deduplication**: Prevent duplicate in-flight requests
+  - `createApiClient({ dedupe: { enabled: true, methods: ['GET'] } })`
+  - Automatically returns same promise for identical concurrent requests
+  - Per-request override: `api.get('/endpoint', { dedupe: false })`
+
+- **Request ID / Correlation**: Request tracing headers
+  - `createApiClient({ requestId: { enabled: true } })`
+  - Custom header name: `requestId: { headerName: 'X-Correlation-ID' }`
+  - Custom generator: `requestId: { generator: () => myUuid() }`
+  - Per-request: `api.get('/endpoint', { requestId: true })` or `{ requestId: 'my-id' }`
+
+- **`timeout` option**: Global and per-request timeout support
+  - `createApiClient({ timeout: 30000 })` - global timeout (default: 30000ms)
+  - `api.get('/endpoint', { timeout: 5000 })` - per-request override
+  - Returns proper 408 status with timeout error message
+
+- **`defaultHeaders` option**: Default headers for all API requests
+  - `createApiClient({ defaultHeaders: { 'X-Custom-Header': 'value' } })`
+  - Merged with request-specific headers
+
+- **`errorMessages.serverError`**: Custom message for 5xx server errors
+- **`errorMessages.timeout`**: Custom message for timeout errors
+- **New tests**: Error classes tests (37), sanitizer tests (20)
+
+- **Next.js 16+ Support**: Documentation and examples now support both:
+  - `proxy.ts` with `export const proxy = authProxy` (Next.js 16+)
+  - `middleware.ts` with `export default authProxy` (Next.js 14-15)
+
+### Changed
+- **BREAKING: `methodSpoofing` config**: Now accepts `boolean | MethodSpoofingConfig` instead of just `boolean`
+  - Object config: `{ enabled: boolean, strategy: 'body' | 'header', fieldName?: string }`
+  - Default strategy is `'body'` (appends `_method` field)
+  - Header strategy uses `X-HTTP-Method-Override` header
+  - Now supports DELETE method in addition to PUT/PATCH
+- **`swrConfig` type**: Now uses full `SWRConfiguration` from SWR instead of limited subset
+- **Improved variable naming**: Internal variables renamed for clarity (e.g., `res` → `fetchResponse`, `u` → `userData`)
+- **CLI**: Uses native Node.js `readline/promises` instead of `prompts` library
+  - Zero runtime dependencies
+  - New questions: protected routes, auth routes
+  - Generated config now includes `apiBaseUrl` and `cookies` for API client
+  - Advanced options (retry, debug, csrf, rateLimit) added as comments
+
+### Removed
+- **`prompts` dependency**: CLI now uses native Node.js APIs (zero dependencies)
+
+### Fixed
+- **Server error handling**: 5xx errors now return proper error response with custom message
+- **Type definitions**: All documented features now have accurate TypeScript types
+- **TypeScript readonly array error**: Fixed `ignoreMethods` type compatibility
+
 ## [0.1.11] - 2026-04-13
 
 ### Fixed

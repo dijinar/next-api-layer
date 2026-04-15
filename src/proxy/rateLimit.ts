@@ -77,10 +77,10 @@ export function createRateLimiter(config: ResolvedRateLimitConfig) {
       };
     }
 
-    const key = config.keyFn(req);
+    const rateLimitKey = config.keyFn(req);
     const now = Date.now();
     
-    let entry = store.get(key);
+    let entry = store.get(rateLimitKey);
     
     // New window or expired
     if (!entry || entry.resetAt <= now) {
@@ -88,7 +88,7 @@ export function createRateLimiter(config: ResolvedRateLimitConfig) {
         count: 1,
         resetAt: now + config.windowMs,
       };
-      store.set(key, entry);
+      store.set(rateLimitKey, entry);
       
       return {
         allowed: true,

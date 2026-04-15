@@ -43,21 +43,21 @@ export interface ServerUserResult<TUser = unknown> {
 /** Default guest check */
 function defaultIsGuest<TUser>(user: TUser): boolean {
   if (!user || typeof user !== 'object') return false;
-  const u = user as Record<string, unknown>;
-  return u.token_type === 'guest' || u.type === 'guest';
+  const userData = user as Record<string, unknown>;
+  return userData.token_type === 'guest' || userData.type === 'guest';
 }
 
 /** Default response parser */
 function defaultParseResponse<TUser>(response: unknown): TUser | null {
   if (!response || typeof response !== 'object') return null;
-  const res = response as Record<string, unknown>;
+  const responseObject = response as Record<string, unknown>;
   
   // { success: true, data: user }
-  if (res.success && res.data) return res.data as TUser;
+  if (responseObject.success && responseObject.data) return responseObject.data as TUser;
   // { user: {...} }
-  if (res.user) return res.user as TUser;
+  if (responseObject.user) return responseObject.user as TUser;
   // Direct user object
-  if ('id' in res || 'email' in res || 'type' in res) return res as TUser;
+  if ('id' in responseObject || 'email' in responseObject || 'type' in responseObject) return responseObject as TUser;
   
   return null;
 }

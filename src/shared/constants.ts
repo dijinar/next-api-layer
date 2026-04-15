@@ -38,10 +38,10 @@ export const TIME = {
 // ==================== Error Messages ====================
 
 export const ERROR_MESSAGES = {
-  NO_TOKEN: 'Token bulunamadı.',
-  INVALID_TOKEN: 'Token geçersiz veya süresi dolmuş.',
-  CONNECTION_ERROR: 'Bağlantı hatası oluştu.',
-  UNAUTHORIZED: 'Bu işlem için yetkiniz yok.',
+  NO_TOKEN: 'Token not found.',
+  INVALID_TOKEN: 'Token is invalid or expired.',
+  CONNECTION_ERROR: 'Connection error occurred.',
+  UNAUTHORIZED: 'You are not authorized for this action.',
 } as const;
 
 // ==================== Headers ====================

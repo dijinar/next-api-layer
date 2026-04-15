@@ -76,13 +76,13 @@ function defaultParseResponse<TUser>(response: unknown): TUser | null {
 function defaultIsGuest<TUser>(user: TUser | null): boolean {
   if (!user || typeof user !== 'object') return false;
   
-  const u = user as Record<string, unknown>;
+  const userData = user as Record<string, unknown>;
   
   // Check token_type (flat structure)
-  if (u.token_type === 'guest') return true;
+  if (userData.token_type === 'guest') return true;
   
   // Check type (nested structure)
-  if (u.type === 'guest') return true;
+  if (userData.type === 'guest') return true;
   
   return false;
 }

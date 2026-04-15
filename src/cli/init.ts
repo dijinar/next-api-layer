@@ -2,18 +2,23 @@
 /**
  * CLI init wizard for next-api-layer
  * Usage: npx next-api-layer init
+ * 
+ * Zero dependencies - uses native Node.js readline
  */
 
-import prompts from 'prompts';
-import fs from 'fs';
-import path from 'path';
+import * as readline from 'node:readline/promises';
+import { stdin as input, stdout as output } from 'node:process';
+import fs from 'node:fs';
+import path from 'node:path';
 
 interface InitAnswers {
-  backend: 'laravel' | 'rails' | 'django' | 'dotnet' | 'express' | 'go' | 'other';
+  backend: string;
   apiBaseUrl: string;
   useI18n: boolean;
   defaultLocale?: string;
   useGuestToken: boolean;
+  protectedRoutes: string;
+  authRoutes: string;
 }
 
 const BACKEND_PRESETS: Record<string, { methodSpoofing: boolean; description: string }> = {
@@ -26,88 +31,107 @@ const BACKEND_PRESETS: Record<string, { methodSpoofing: boolean; description: st
   other: { methodSpoofing: false, description: 'Other' },
 };
 
+const BACKEND_KEYS = Object.keys(BACKEND_PRESETS);
+
 async function main() {
-  console.log('\n🔐 next-api-layer setup\n');
+  const rl = readline.createInterface({ input, output });
+  
+  console.log('\n\x1b[36m next-api-layer setup\x1b[0m\n');
 
-  const answers = await prompts([
-    {
-      type: 'select',
-      name: 'backend',
-      message: 'Backend framework?',
-      choices: Object.entries(BACKEND_PRESETS).map(([value, { description }]) => ({
-        title: description,
-        value,
-      })),
-    },
-    {
-      type: 'text',
-      name: 'apiBaseUrl',
-      message: 'API base URL? (Enter to skip)',
-      initial: '',
-      hint: 'e.g. http://localhost:8000/api',
-    },
-    {
-      type: 'confirm',
-      name: 'useI18n',
-      message: 'Use i18n (next-intl)?',
-      initial: false,
-    },
-    {
-      type: (prev) => prev ? 'text' : null,
-      name: 'defaultLocale',
-      message: 'Default locale?',
-      initial: 'en',
-    },
-    {
-      type: 'confirm',
-      name: 'useGuestToken',
-      message: 'Use guest token for unauthenticated users?',
-      initial: false,
-    },
-  ]);
-
-  // User cancelled
-  if (!answers.backend) {
-    console.log('\n❌ Setup cancelled.\n');
-    process.exit(1);
-  }
-
-  const preset = BACKEND_PRESETS[answers.backend];
-  const config = generateConfig(answers, preset);
-
-  // Determine output path
-  const outputDir = findConfigDir();
-  const outputPath = path.join(outputDir, 'auth.config.ts');
-
-  // Check if file exists
-  if (fs.existsSync(outputPath)) {
-    const { overwrite } = await prompts({
-      type: 'confirm',
-      name: 'overwrite',
-      message: `${outputPath} already exists. Overwrite?`,
-      initial: false,
+  try {
+    // Backend selection
+    console.log('Backend framework:');
+    BACKEND_KEYS.forEach((key, i) => {
+      console.log(`  ${i + 1}) ${BACKEND_PRESETS[key].description}`);
     });
-
-    if (!overwrite) {
-      console.log('\n❌ Setup cancelled.\n');
+    
+    const backendChoice = await rl.question('\nSelect (1-7): ');
+    const backendIndex = parseInt(backendChoice, 10) - 1;
+    
+    if (isNaN(backendIndex) || backendIndex < 0 || backendIndex >= BACKEND_KEYS.length) {
+      console.log('\n\x1b[31mInvalid selection. Setup cancelled.\x1b[0m\n');
+      rl.close();
       process.exit(1);
     }
-  }
+    
+    const backend = BACKEND_KEYS[backendIndex];
+    const preset = BACKEND_PRESETS[backend];
 
-  // Ensure directory exists
-  fs.mkdirSync(outputDir, { recursive: true });
+    // API Base URL
+    const apiBaseUrl = await rl.question('\nAPI base URL (leave empty to use env): ');
 
-  // Write config file
-  fs.writeFileSync(outputPath, config, 'utf-8');
+    // i18n
+    const useI18nInput = await rl.question('\nUse i18n (next-intl)? (y/N): ');
+    const useI18n = useI18nInput.toLowerCase() === 'y' || useI18nInput.toLowerCase() === 'yes';
+    
+    let defaultLocale: string | undefined;
+    if (useI18n) {
+      defaultLocale = await rl.question('Default locale (en): ') || 'en';
+    }
 
-  console.log(`\n✅ Created ${outputPath}\n`);
-  console.log('Next steps:');
-  console.log('  1. Review and update the config file');
-  console.log('  2. Create your proxy route: app/api/[...path]/route.ts');
-  console.log('  3. Import { authProxy, api } from your config\n');
+    // Guest token
+    const useGuestTokenInput = await rl.question('\nUse guest token for unauthenticated users? (y/N): ');
+    const useGuestToken = useGuestTokenInput.toLowerCase() === 'y' || useGuestTokenInput.toLowerCase() === 'yes';
 
-  if (preset.methodSpoofing) {
-    console.log(`💡 Method spoofing enabled for ${answers.backend} (PUT/PATCH → POST + _method)\n`);
+    // Protected routes
+    const protectedRoutes = await rl.question('\nProtected routes (comma-separated, e.g. /dashboard,/profile): ');
+    
+    // Auth routes
+    const authRoutes = await rl.question('Auth routes - redirect if logged in (e.g. /login,/register): ');
+
+    const answers: InitAnswers = {
+      backend,
+      apiBaseUrl: apiBaseUrl.trim(),
+      useI18n,
+      defaultLocale,
+      useGuestToken,
+      protectedRoutes: protectedRoutes.trim(),
+      authRoutes: authRoutes.trim(),
+    };
+
+    const config = generateConfig(answers, preset);
+
+    // Determine output path
+    const outputDir = findConfigDir();
+    const outputPath = path.join(outputDir, 'auth.config.ts');
+
+    // Check if file exists
+    if (fs.existsSync(outputPath)) {
+      const overwriteInput = await rl.question(`\n${outputPath} already exists. Overwrite? (y/N): `);
+      const overwrite = overwriteInput.toLowerCase() === 'y' || overwriteInput.toLowerCase() === 'yes';
+
+      if (!overwrite) {
+        console.log('\n\x1b[31mSetup cancelled.\x1b[0m\n');
+        rl.close();
+        process.exit(1);
+      }
+    }
+
+    // Ensure directory exists
+    fs.mkdirSync(outputDir, { recursive: true });
+
+    // Write config file
+    fs.writeFileSync(outputPath, config, 'utf-8');
+
+    console.log(`\n\x1b[32mCreated ${outputPath}\x1b[0m\n`);
+    console.log('Next steps:');
+    console.log('  1. Review and update the config file');
+    console.log('  2. Create your proxy route: app/api/[...path]/route.ts');
+    console.log('  3. Import { authProxy, api } from your config\n');
+
+    if (preset.methodSpoofing) {
+      console.log(`\x1b[33mMethod spoofing enabled for ${backend} (PUT/PATCH -> POST + _method)\x1b[0m\n`);
+    }
+
+    rl.close();
+  } catch (err) {
+    rl.close();
+    // User pressed Ctrl+C
+    if ((err as NodeJS.ErrnoException).code === 'ERR_USE_AFTER_CLOSE') {
+      console.log('\n\x1b[31mSetup cancelled.\x1b[0m\n');
+      process.exit(1);
+    }
+    throw err;
   }
 }
 
@@ -167,18 +191,46 @@ function generateConfig(answers: InitAnswers, preset: { methodSpoofing: boolean 
     );
   }
 
+  // Access control
+  const protectedArr = answers.protectedRoutes 
+    ? answers.protectedRoutes.split(',').map(r => r.trim()).filter(Boolean)
+    : [];
+  const authArr = answers.authRoutes
+    ? answers.authRoutes.split(',').map(r => r.trim()).filter(Boolean)
+    : [];
+  
+  if (protectedArr.length > 0 || authArr.length > 0) {
+    lines.push(``,
+      `  access: {`
+    );
+    if (protectedArr.length > 0) {
+      lines.push(`    protectedRoutes: [${protectedArr.map(r => `'${r}'`).join(', ')}],`);
+    }
+    if (authArr.length > 0) {
+      lines.push(`    authRoutes: [${authArr.map(r => `'${r}'`).join(', ')}],`);
+    }
+    lines.push(`  },`);
+  }
+
   lines.push(`});`, ``);
 
   // API Client
   lines.push(
     `// ==================== API Client ====================`,
     ``,
-    `export const api = createApiClient({`
+    `export const api = createApiClient({`,
+    `  apiBaseUrl: ${apiUrlValue},`,
+    ``,
+    `  cookies: {`,
+    `    user: 'auth_token',`,
+    `    guest: 'guest_token',`,
+    `  },`
   );
 
   // Method spoofing
   if (preset.methodSpoofing) {
-    lines.push(`  methodSpoofing: true, // ${answers.backend === 'laravel' ? 'Laravel' : 'Rails'} PUT/PATCH support`);
+    lines.push(``,
+      `  methodSpoofing: true, // ${answers.backend === 'laravel' ? 'Laravel' : 'Rails'} PUT/PATCH support`);
   }
 
   // Sanitization (always on by default)
@@ -203,10 +255,25 @@ function generateConfig(answers: InitAnswers, preset: { methodSpoofing: boolean 
 
   lines.push(`});`, ``);
 
+  // v0.2.0+ Advanced features as comments
+  lines.push(
+    `// ==================== Advanced Options ====================`,
+    `// Uncomment and add these to createApiClient config:`,
+    `//`,
+    `// retry: { enabled: true, maxAttempts: 3, backoff: 'exponential' },`,
+    `// debug: { enabled: process.env.NODE_ENV === 'development' },`,
+    `// timeout: 30000,`,
+    `//`,
+    `// Add these to createAuthProxy config:`,
+    `// csrf: { enabled: true },`,
+    `// rateLimit: { enabled: true, maxRequests: 100, windowMs: 60000 },`,
+    ``
+  );
+
   // Export types
   lines.push(
     `// Re-export for convenience`,
-    `export type { ApiResponse } from 'next-api-layer/api';`,
+    `export type { ApiResponse } from 'next-api-layer';`,
     ``
   );
 

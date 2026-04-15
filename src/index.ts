@@ -64,6 +64,26 @@ export {
   CSRF_SAFE_METHODS,
 } from './shared/constants';
 
+// ==================== Error Classes ====================
+
+export {
+  ApiError,
+  HttpError,
+  TimeoutError,
+  NetworkError,
+  AuthError,
+  ValidationError,
+  RateLimitError,
+  isApiError,
+  isHttpError,
+  isTimeoutError,
+  isNetworkError,
+  isAuthError,
+  isRateLimitError,
+  isRetryableStatus,
+  isRetryableError,
+} from './shared/errors';
+
 // ==================== Security modules ====================
 
 export { createCsrfValidator } from './proxy/csrf';

@@ -179,7 +179,7 @@ export function createHandlers(
     
     // No guest token - just continue or redirect
     if (isApiRoute) {
-      return jsonError('Token bulunamadı', 401);
+      return jsonError('Token not found', 401);
     }
     
     if (isProtectedRoute(req.nextUrl.pathname)) {
@@ -281,7 +281,7 @@ export function createHandlers(
     // Check if token type is allowed
     if (!isGuest && !isTokenTypeAllowed(tokenType)) {
       if (isApiRoute) {
-        const response = jsonError('Bu işlem için yetkiniz yok', 403);
+        const response = jsonError('You are not authorized for this action', 403);
         return deleteAllAuthCookies(req, response);
       }
       
