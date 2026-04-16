@@ -623,9 +623,18 @@ interface ApiClientConfig {
     logResponses?: boolean;       // Default: true
     logTiming?: boolean;          // Default: true
     logHeaders?: boolean;         // Default: false
-    logBody?: boolean;            // Default: false
-    bodyPreviewLength?: number;   // Default: 200
+    logRequestBody?: boolean;     // Default: false - Log request payloads
+    logResponseBody?: boolean;    // Default: false - Log response data
+    maxStringLength?: number;     // Default: 500 - Per-field truncation
+    maxArrayItems?: number;       // Default: 10 - Array items limit
+    maxDepth?: number;            // Default: 5 - Object nesting depth
+    autoMask?: boolean;           // Default: true - Enable sensitive field masking
+    sensitiveFields?: string[];   // Fields to mask (password, token, etc.)
     logger?: (message: string, data?: Record<string, unknown>) => void;
+    
+    // Deprecated (use logRequestBody/logResponseBody and maxStringLength)
+    logBody?: boolean;
+    bodyPreviewLength?: number;
   };
   
   // Request deduplication
@@ -746,16 +755,43 @@ const api = createApiClient({
     logRequests: true,
     logResponses: true,
     logTiming: true,
-    logHeaders: false,  // Careful with sensitive headers
-    logBody: false,     // Careful with sensitive data
-    bodyPreviewLength: 200,
+    logHeaders: false,       // Careful with sensitive headers
+    
+    // Body logging (v0.2.2+)
+    logRequestBody: false,   // Log request payloads
+    logResponseBody: false,  // Log response data
+    
+    // Smart truncation (per-field, not total)
+    maxStringLength: 500,    // Truncate long strings
+    maxArrayItems: 10,       // Limit array items shown
+    maxDepth: 5,             // Object nesting depth
+    
+    // Sensitive data protection
+    autoMask: true,          // Enable/disable masking (default: true)
+    sensitiveFields: [       // Fields to mask when autoMask is true
+      'password', 'token', 'secret', 'authorization',
+      'apiKey', 'api_key', 'accessToken', 'refreshToken',
+      'creditCard', 'credit_card', 'cvv', 'ssn'
+    ],
   },
 });
 
 // Output:
 // [API] → GET /users { method: 'GET', url: '...', timeout: 30000 }
 // [API] ← GET /users 200 { status: 200, duration: 45, size: 1234 }
+
+// With body logging enabled:
+// [API] → POST /auth/login
+//   body: { email: "user@example.com", password: "***" }
+// [API] ← POST /auth/login 200
+//   body: { token: "***", user: { id: 1, name: "John" } }
+
+// Binary data is automatically detected:
+//   body: { avatar: "[base64, 45KB]", name: "John" }
+//   body: { image: "[data URL (image/png), 2.3MB]" }
 ```
+
+**Tip:** Set `autoMask: false` temporarily to see actual values during debugging.
 
 ### Request Deduplication
 

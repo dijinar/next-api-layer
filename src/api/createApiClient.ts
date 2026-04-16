@@ -74,10 +74,45 @@ export interface DebugConfig {
   logTiming?: boolean;
   /** Log headers (default: false - may contain sensitive data) */
   logHeaders?: boolean;
-  /** Log request body preview (default: false - may contain sensitive data) */
+  
+  // Body logging options
+  /** 
+   * Log request body (default: false)
+   * @deprecated Use logRequestBody instead
+   */
   logBody?: boolean;
-  /** Maximum body preview length in characters (default: 200) */
+  /** Log request body with smart formatting (default: false) */
+  logRequestBody?: boolean;
+  /** Log response body with smart formatting (default: false) */
+  logResponseBody?: boolean;
+  
+  // Smart truncation options
+  /** 
+   * Maximum body preview length in characters (default: 200)
+   * @deprecated Use maxStringLength instead
+   */
   bodyPreviewLength?: number;
+  /** Maximum string length per field before truncation (default: 500) */
+  maxStringLength?: number;
+  /** Maximum array items to show before "... and N more" (default: 10) */
+  maxArrayItems?: number;
+  /** Maximum object nesting depth (default: 5) */
+  maxDepth?: number;
+  
+  // Sensitive data masking
+  /**
+   * Enable automatic masking of sensitive fields (default: true)
+   * When true, uses sensitiveFields list to mask values with "***"
+   * Set to false to see all data unmasked (useful for debugging)
+   */
+  autoMask?: boolean;
+  /** 
+   * Fields to mask with "***" when autoMask is true
+   * Default: ['password', 'token', 'secret', 'authorization', 'apiKey', 'api_key', 'accessToken', 'refreshToken', 'creditCard', 'credit_card', 'cvv', 'ssn']
+   * Supports nested paths like 'user.password'
+   */
+  sensitiveFields?: string[];
+  
   /** Custom logger function (default: console.log with formatting) */
   logger?: (message: string, data?: Record<string, unknown>) => void;
 }
@@ -333,14 +368,32 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
   };
   
   // Parse debug config with defaults
-  const debug: Required<Omit<DebugConfig, 'logger'>> & { logger?: DebugConfig['logger'] } = {
+  // Backward compat: logBody -> logRequestBody/logResponseBody, bodyPreviewLength -> maxStringLength
+  const legacyLogBody = debugConfig?.logBody ?? false;
+  const legacyBodyPreviewLength = debugConfig?.bodyPreviewLength ?? 200;
+  
+  const debug = {
     enabled: debugConfig?.enabled ?? false,
     logRequests: debugConfig?.logRequests ?? true,
     logResponses: debugConfig?.logResponses ?? true,
     logTiming: debugConfig?.logTiming ?? true,
     logHeaders: debugConfig?.logHeaders ?? false,
-    logBody: debugConfig?.logBody ?? false,
-    bodyPreviewLength: debugConfig?.bodyPreviewLength ?? 200,
+    // New body logging options with backward compat
+    logBody: legacyLogBody,
+    logRequestBody: debugConfig?.logRequestBody ?? legacyLogBody,
+    logResponseBody: debugConfig?.logResponseBody ?? legacyLogBody,
+    // Smart truncation with backward compat
+    bodyPreviewLength: legacyBodyPreviewLength,
+    maxStringLength: debugConfig?.maxStringLength ?? legacyBodyPreviewLength,
+    maxArrayItems: debugConfig?.maxArrayItems ?? 10,
+    maxDepth: debugConfig?.maxDepth ?? 5,
+    // Sensitive field masking
+    autoMask: debugConfig?.autoMask ?? true,
+    sensitiveFields: debugConfig?.sensitiveFields ?? [
+      'password', 'token', 'secret', 'authorization', 
+      'apiKey', 'api_key', 'accessToken', 'refreshToken',
+      'creditCard', 'credit_card', 'cvv', 'ssn'
+    ],
     logger: debugConfig?.logger,
   };
   
@@ -402,27 +455,173 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
   }
 
   /**
-   * Format body preview for logging
+   * Check if a field name is sensitive (should be masked)
    */
-  function formatBodyPreview(body: unknown): string {
-    if (!body) return '(empty)';
+  function isSensitiveField(fieldPath: string): boolean {
+    // If autoMask is disabled, nothing is sensitive
+    if (!debug.autoMask) return false;
     
-    if (body instanceof FormData) {
-      const entries: string[] = [];
-      body.forEach((value, key) => {
-        if (value instanceof File) {
-          entries.push(`${key}: [File: ${value.name}]`);
-        } else {
-          const strValue = String(value);
-          entries.push(`${key}: ${strValue.substring(0, 50)}${strValue.length > 50 ? '...' : ''}`);
-        }
-      });
-      return `FormData { ${entries.slice(0, 5).join(', ')}${entries.length > 5 ? ', ...' : ''} }`;
+    const fieldName = fieldPath.split('.').pop()?.toLowerCase() ?? '';
+    return debug.sensitiveFields.some(sensitive => {
+      const sensitiveLower = sensitive.toLowerCase();
+      // Exact match or ends with the sensitive field name
+      return fieldName === sensitiveLower || 
+             fieldPath.toLowerCase() === sensitiveLower ||
+             fieldPath.toLowerCase().endsWith(`.${sensitiveLower}`);
+    });
+  }
+
+  /**
+   * Detect if a string looks like binary/base64 data
+   */
+  function isBinaryLike(str: string): { isBinary: boolean; type?: string; size?: string } {
+    if (!str || str.length < 50) return { isBinary: false };
+    
+    // Data URL
+    if (str.startsWith('data:')) {
+      const match = str.match(/^data:([^;,]+)/);
+      const mimeType = match?.[1] ?? 'unknown';
+      const size = formatBytes(str.length);
+      return { isBinary: true, type: `data URL (${mimeType})`, size };
     }
     
-    const str = typeof body === 'string' ? body : JSON.stringify(body);
-    if (str.length <= debug.bodyPreviewLength) return str;
-    return `${str.substring(0, debug.bodyPreviewLength)}...`;
+    // Base64 pattern (long string of base64 chars)
+    if (str.length > 100 && /^[A-Za-z0-9+/]+=*$/.test(str)) {
+      const size = formatBytes(Math.floor(str.length * 0.75)); // Approximate decoded size
+      return { isBinary: true, type: 'base64', size };
+    }
+    
+    return { isBinary: false };
+  }
+
+  /**
+   * Format bytes to human readable string
+   */
+  function formatBytes(bytes: number): string {
+    if (bytes < 1024) return `${bytes}B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+  }
+
+  /**
+   * Format File object info
+   */
+  function formatFileInfo(file: File): string {
+    const size = formatBytes(file.size);
+    const type = file.type || 'unknown';
+    return `[File: ${file.name}, ${size}, ${type}]`;
+  }
+
+  /**
+   * Smart format a value for logging with truncation and masking
+   */
+  function smartFormat(value: unknown, path: string = '', depth: number = 0): unknown {
+    // Check depth limit
+    if (depth > debug.maxDepth) {
+      return '[max depth reached]';
+    }
+
+    // Mask sensitive fields
+    if (path && isSensitiveField(path)) {
+      return '***';
+    }
+
+    // Handle null/undefined
+    if (value === null) return null;
+    if (value === undefined) return undefined;
+
+    // Handle strings
+    if (typeof value === 'string') {
+      // Check for binary-like data
+      const binaryCheck = isBinaryLike(value);
+      if (binaryCheck.isBinary) {
+        return `[${binaryCheck.type}, ${binaryCheck.size}]`;
+      }
+      
+      // Truncate long strings
+      if (value.length > debug.maxStringLength) {
+        return `${value.substring(0, debug.maxStringLength)}... (${formatBytes(value.length)} truncated)`;
+      }
+      return value;
+    }
+
+    // Handle numbers, booleans
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return value;
+    }
+
+    // Handle arrays
+    if (Array.isArray(value)) {
+      const formatted = value.slice(0, debug.maxArrayItems).map((item, index) => 
+        smartFormat(item, `${path}[${index}]`, depth + 1)
+      );
+      if (value.length > debug.maxArrayItems) {
+        formatted.push(`... and ${value.length - debug.maxArrayItems} more items`);
+      }
+      return formatted;
+    }
+
+    // Handle objects
+    if (typeof value === 'object') {
+      const formatted: Record<string, unknown> = {};
+      const entries = Object.entries(value as Record<string, unknown>);
+      
+      for (const [key, val] of entries) {
+        const newPath = path ? `${path}.${key}` : key;
+        formatted[key] = smartFormat(val, newPath, depth + 1);
+      }
+      return formatted;
+    }
+
+    return String(value);
+  }
+
+  /**
+   * Format body preview for logging (enhanced with smart formatting)
+   */
+  function formatBodyPreview(body: unknown): unknown {
+    if (!body) return '(empty)';
+    
+    // Handle FormData specially
+    if (body instanceof FormData) {
+      const entries: Record<string, unknown> = {};
+      let count = 0;
+      const maxEntries = debug.maxArrayItems;
+      
+      body.forEach((value, key) => {
+        if (count >= maxEntries) return;
+        count++;
+        
+        if (isSensitiveField(key)) {
+          entries[key] = '***';
+        } else if (value instanceof File) {
+          entries[key] = formatFileInfo(value);
+        } else {
+          const strValue = String(value);
+          const binaryCheck = isBinaryLike(strValue);
+          if (binaryCheck.isBinary) {
+            entries[key] = `[${binaryCheck.type}, ${binaryCheck.size}]`;
+          } else if (strValue.length > debug.maxStringLength) {
+            entries[key] = `${strValue.substring(0, debug.maxStringLength)}... (truncated)`;
+          } else {
+            entries[key] = strValue;
+          }
+        }
+      });
+      
+      // Count remaining entries
+      let totalCount = 0;
+      body.forEach(() => totalCount++);
+      
+      if (totalCount > maxEntries) {
+        entries['...'] = `and ${totalCount - maxEntries} more fields`;
+      }
+      
+      return { FormData: entries };
+    }
+    
+    // Use smart formatting for objects/arrays
+    return smartFormat(body);
   }
 
   /**
@@ -703,7 +902,7 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
       if (debug.logHeaders) {
         logData.headers = fetchHeaders;
       }
-      if (debug.logBody && fetchBody) {
+      if (debug.logRequestBody && fetchBody) {
         logData.body = formatBodyPreview(fetchBody);
       }
       debugLog(`→ ${method} ${endpoint}`, logData);
@@ -805,7 +1004,7 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
         if (duration !== undefined) {
           logData.duration = `${duration}ms`;
         }
-        if (debug.logBody) {
+        if (debug.logResponseBody) {
           logData.body = formatBodyPreview(responseData);
         }
         const statusSymbol = fetchResponse.status >= 200 && fetchResponse.status < 300 ? '✓' : '✗';

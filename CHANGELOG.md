@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-04-17
+
+### Added
+- **Enhanced Debug Body Logging**: Smart request/response body logging with DX-focused features
+  - `logRequestBody` - Log request payloads separately (default: false)
+  - `logResponseBody` - Log response data separately (default: false)
+  - `maxStringLength` - Per-field string truncation (default: 500)
+  - `maxArrayItems` - Array item limit with "... and N more" (default: 10)
+  - `maxDepth` - Object nesting depth limit (default: 5)
+  - `autoMask` - Enable/disable sensitive field masking (default: true)
+  - `sensitiveFields` - Customize which fields to mask (password, token, secret, cvv, etc.)
+
+- **Smart Binary Detection**: Automatically detects and summarizes binary-like data
+  - Base64 strings shown as `[base64, 45KB]`
+  - Data URLs shown as `[data URL (image/png), 2.3MB]`
+  - Prevents terminal spam from large payloads
+
+- **Enhanced FormData Logging**: Better visibility for file uploads
+  - File info: `[File: photo.jpg, 2.4MB, image/jpeg]`
+  - Sensitive fields masked in FormData
+  - Field count with "... and N more fields"
+
+### Changed
+- `logBody` deprecated in favor of `logRequestBody`/`logResponseBody` (still works for backward compat)
+- `bodyPreviewLength` deprecated in favor of `maxStringLength` (still works for backward compat)
+
+### Example
+```typescript
+// Minimal config - smart defaults
+debug: { enabled: true, logRequestBody: true, logResponseBody: true }
+
+// Console output:
+// → POST /auth/login
+//   body: { email: "user@example.com", password: "***" }
+// ✓ POST /auth/login - 200
+//   body: { success: true, user: { id: 1, name: "John" }, token: "***" }
+```
+
 ## [0.2.1] - 2026-04-16
 
 ### Fixed
