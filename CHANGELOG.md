@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-04-16
+
+### Fixed
+- **URL field sanitization**: URL values in API payloads are now preserved correctly
+  - Previously, URLs like `https://example.com/callback` were being encoded to `https&#x2F;&#x2F;example.com&#x2F;callback`
+  - Safe URLs (https, http, mailto, tel, ftp, relative paths) now pass through unchanged
+  - XSS vectors (javascript:, data:, vbscript:, protocol-relative //) are still sanitized
+  - No configuration needed - automatic detection based on URL patterns
+
+### Added
+- `isSafeUrl()` internal function for smart URL detection
+- 18 new unit tests for URL preservation scenarios
+
 ## [0.2.0] - 2026-04-15
 
 ### Added

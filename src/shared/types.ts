@@ -270,8 +270,14 @@ export interface ApiClientConfig {
     publicEndpoints?: string[];
   };
   errorMessages?: {
+    /** Message when no auth token is available */
     noToken?: string;
+    /** Message for network/connection errors */
     connectionError?: string;
+    /** Message for 5xx server errors */
+    serverError?: string;
+    /** Message when request times out */
+    timeout?: string;
   };
 }
 

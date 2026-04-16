@@ -28,6 +28,53 @@ const HTML_ENTITIES: Record<string, string> = {
 
 // Regex patterns
 const HTML_ENTITY_REGEX = /[&<>"'`=/]/g;
+
+// URL protocol whitelists
+const SAFE_PROTOCOLS = ['https:', 'http:', 'mailto:', 'tel:', 'ftp:'];
+const DANGEROUS_PROTOCOLS = ['javascript:', 'data:', 'vbscript:'];
+
+/**
+ * Checks if a string is a safe URL that should not be sanitized.
+ * Safe URLs include:
+ * - Absolute URLs with safe protocols (https, http, mailto, tel, ftp)
+ * - Relative paths starting with single slash (e.g., /callback)
+ * 
+ * XSS vectors are NOT safe:
+ * - javascript: URLs
+ * - data: URLs
+ * - vbscript: URLs
+ * - Protocol-relative URLs (//evil.com)
+ */
+function isSafeUrl(value: string): boolean {
+  const trimmed = value.trim();
+  
+  // Empty strings are not URLs
+  if (!trimmed) return false;
+  
+  // Check for dangerous protocols first (case-insensitive)
+  const lower = trimmed.toLowerCase();
+  if (DANGEROUS_PROTOCOLS.some(p => lower.startsWith(p))) {
+    return false;
+  }
+  
+  // Check for safe absolute URLs
+  try {
+    const url = new URL(trimmed);
+    if (SAFE_PROTOCOLS.includes(url.protocol)) {
+      return true;
+    }
+  } catch {
+    // Not a valid absolute URL, continue checking
+  }
+  
+  // Check for safe relative paths (single slash, not protocol-relative)
+  // /callback is safe, //evil.com is not
+  if (/^\/(?!\/)/.test(trimmed)) {
+    return true;
+  }
+  
+  return false;
+}
 const SCRIPT_PATTERN = /<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi;
 const EVENT_HANDLER_PATTERN = /\s*on\w+\s*=\s*["'][^"']*["']/gi;
 const JAVASCRIPT_URL_PATTERN = /javascript\s*:/gi;
@@ -88,9 +135,16 @@ export function createSanitizer(config?: SanitizationConfig) {
 
   /**
    * Sanitizes a single string value
+   * Skips safe URLs to preserve returnUrl, callbackUrl, etc.
    */
   function sanitizeString(value: string): string {
     if (!enabled) return value;
+    
+    // Skip sanitization for safe URLs (https, http, mailto, tel, relative paths)
+    // XSS vectors like javascript: and data: are still sanitized
+    if (isSafeUrl(value)) {
+      return value;
+    }
     
     switch (mode) {
       case 'strip':
