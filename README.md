@@ -582,7 +582,8 @@ Creates an API client for making requests.
 interface ApiClientConfig {
   sanitization?: {
     enabled?: boolean;          // Default: true
-    allowedTags?: string[];     // HTML tags to allow
+    mode?: 'strip' | 'escape' | 'allowList'; // Default: 'strip'
+    allowedTags?: string[];     // Tags allowed in 'allowList' mode
     skipFields?: string[];      // Fields to skip sanitization
   };
   

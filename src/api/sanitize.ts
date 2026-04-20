@@ -3,9 +3,14 @@
  * Zero-dependency, lightweight sanitizer for API responses
  * 
  * Modes:
- * - 'escape' (default): Escapes HTML entities (&lt;script&gt;)
- * - 'strip': Removes all HTML tags completely
- * - 'allowList': Only allows specified tags (advanced)
+ * - 'strip' (default): Removes HTML tags, preserves plain text characters
+ *   Best for API responses rendered in React/Vue/Angular (frameworks auto-escape text)
+ * - 'escape': Escapes only HTML-sensitive chars (<, >, &) - for dangerouslySetInnerHTML contexts
+ * - 'allowList': Only allows specified tags (for rich-text / CMS content)
+ *
+ * Note: Plain text characters like apostrophes ('), slashes (/), backticks (`), equals (=)
+ * are NEVER escaped. They display correctly as text in modern frameworks and over-escaping
+ * them breaks text content like "Kur'an", URLs, code snippets, etc.
  */
 
 import type { SanitizationConfig } from '../shared/types';
@@ -14,20 +19,17 @@ export interface SanitizeOptions {
   config: SanitizationConfig;
 }
 
-// HTML entities to escape
+// HTML entities to escape (minimal OWASP-safe set for HTML context)
+// Only chars that affect HTML parsing: <, >, & (and " for attribute contexts)
 const HTML_ENTITIES: Record<string, string> = {
   '&': '&amp;',
   '<': '&lt;',
   '>': '&gt;',
   '"': '&quot;',
-  "'": '&#x27;',
-  '/': '&#x2F;',
-  '`': '&#x60;',
-  '=': '&#x3D;',
 };
 
 // Regex patterns
-const HTML_ENTITY_REGEX = /[&<>"'`=/]/g;
+const HTML_ENTITY_REGEX = /[&<>"]/g;
 
 // URL protocol whitelists
 const SAFE_PROTOCOLS = ['https:', 'http:', 'mailto:', 'tel:', 'ftp:'];
@@ -89,14 +91,22 @@ function escapeHtml(str: string): string {
 
 /**
  * Strips all HTML tags from a string
+ *
+ * Only matches well-formed HTML tags: `<` followed by a letter or `/letter`
+ * (optionally with attributes) and a closing `>`. This is how real HTML
+ * parsers (browsers, DOMPurify) behave.
+ *
+ * Text like "5 < 10 and 20 > 3" or "price > 100 & qty < 5" is preserved
+ * because `< 10` is not a valid tag opener.
  */
 function stripHtml(str: string): string {
   return str
-    .replace(SCRIPT_PATTERN, '')           // Remove script tags first
-    .replace(/<[^>]*>/g, '')               // Remove all HTML tags
-    .replace(EVENT_HANDLER_PATTERN, '')    // Remove any remaining event handlers
-    .replace(JAVASCRIPT_URL_PATTERN, '')   // Remove javascript: URLs
-    .replace(DATA_URL_PATTERN, '');        // Remove suspicious data URLs
+    .replace(SCRIPT_PATTERN, '')                       // Remove script tags (with content)
+    .replace(/<\/?[a-zA-Z][^<>]*>/g, '')               // Remove well-formed HTML tags only
+    .replace(/<!--[\s\S]*?-->/g, '')                   // Remove HTML comments
+    .replace(EVENT_HANDLER_PATTERN, '')                // Remove any remaining event handlers
+    .replace(JAVASCRIPT_URL_PATTERN, '')               // Remove javascript: URLs
+    .replace(DATA_URL_PATTERN, '');                    // Remove suspicious base64 data URLs
 }
 
 /**
@@ -128,7 +138,9 @@ function sanitizeWithAllowList(str: string, allowedTags: string[]): string {
  * Creates a sanitization function based on config
  */
 export function createSanitizer(config?: SanitizationConfig) {
-  const mode = config?.mode ?? 'escape';
+  // Default: 'strip' - removes HTML tags without over-escaping plain text chars.
+  // Safe for React/Vue/Angular which auto-escape text content.
+  const mode = config?.mode ?? 'strip';
   const allowedTags = config?.allowedTags ?? [];
   const enabled = config?.enabled !== false; // default: true
   const skipFields = config?.skipFields ?? [];
@@ -147,13 +159,13 @@ export function createSanitizer(config?: SanitizationConfig) {
     }
     
     switch (mode) {
-      case 'strip':
-        return stripHtml(value);
+      case 'escape':
+        return escapeHtml(value);
       case 'allowList':
         return sanitizeWithAllowList(value, allowedTags);
-      case 'escape':
+      case 'strip':
       default:
-        return escapeHtml(value);
+        return stripHtml(value);
     }
   }
 
@@ -304,11 +316,12 @@ export function createSanitizer(config?: SanitizationConfig) {
 export type Sanitizer = ReturnType<typeof createSanitizer>;
 
 /**
- * Default sanitizer with escape mode (enabled by default)
+ * Default sanitizer with strip mode (enabled by default)
+ * Strips HTML tags without mangling plain text characters.
  */
 export const defaultSanitizer = createSanitizer({
   enabled: true,
-  mode: 'escape',
+  mode: 'strip',
   skipFields: [],
 });
 

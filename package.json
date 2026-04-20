@@ -1,6 +1,6 @@
 {
   "name": "next-api-layer",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Production-grade API layer for Next.js with external JWT backend support",
   "keywords": [
     "nextjs",

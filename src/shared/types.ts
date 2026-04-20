@@ -226,9 +226,12 @@ export interface SanitizationConfig {
   enabled?: boolean;
   /** 
    * Sanitization mode:
-   * - 'escape': Escapes HTML entities (default, safest)
-   * - 'strip': Removes all HTML tags
-   * - 'allowList': Only allows specified tags in allowedTags
+   * - 'strip' (default): Removes HTML tags, preserves plain text characters.
+   *   Safe for React/Vue/Angular which auto-escape text content.
+   * - 'escape': Escapes HTML-sensitive chars (<, >, &, ") for raw HTML contexts.
+   * - 'allowList': Only allows specified tags in allowedTags (for rich-text content).
+   * 
+   * @default 'strip'
    */
   mode?: 'escape' | 'strip' | 'allowList';
   /** Tags to allow when mode is 'allowList' */

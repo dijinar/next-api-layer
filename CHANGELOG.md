@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-04-20
+
+### Fixed
+
+- **Sanitization over-escaping bug**: Plain text characters (`/`, `'`, `` ` ``, `=`) were being HTML-escaped to entities like `&#x2F;`, `&#x27;`, `&#x3D;`, breaking text display in modern frameworks (React/Vue/Angular auto-escape output, so API-level escaping was redundant and corrupting data). Reported via Turkish text like "Kur'an Hediyesi" appearing as "Kur&#x27;an Hediyesi".
+- **Default mode changed** from `'escape'` to `'strip'` — safer default for API responses, removes HTML tags without mangling plain text.
+- **`escape` mode char set minimized** to OWASP minimum: only `<`, `>`, `&`, `"` are now escaped. Apostrophes, slashes, backticks, and equals signs pass through unchanged (they do not break HTML parsing in text content, and double-quoted attributes protect against `'` injection).
+
+### Migration
+
+If you were relying on the old `'escape'` default and need full HTML escaping in a raw-HTML context, keep `mode: 'escape'`. Tag injection (`<script>`, `<img onerror>`, etc.) is still fully blocked. Most apps should benefit from the new `'strip'` default without any changes.
+
 ## [0.2.2] - 2026-04-17
 
 ### Added
