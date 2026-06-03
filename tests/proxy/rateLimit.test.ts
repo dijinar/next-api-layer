@@ -10,6 +10,8 @@ function getConfig(overrides?: Partial<ResolvedRateLimitConfig>): ResolvedRateLi
     maxRequests: 3,
     keyFn: req => req.headers.get('x-forwarded-for') || 'unknown',
     skipRoutes: [],
+    skipPrefetch: true,
+    ipHeaders: ['cf-connecting-ip', 'true-client-ip', 'x-real-ip', 'x-forwarded-for'],
     onRateLimited: undefined,
     ...overrides,
   };
@@ -55,5 +57,45 @@ describe('createRateLimiter', () => {
     expect(limiter.check(reqA).allowed).toBe(false);
 
     expect(limiter.check(reqB).allowed).toBe(true);
+  });
+
+  describe('prefetch handling', () => {
+    const prefetchHeaders = [
+      { 'next-router-prefetch': '1' },
+      { 'sec-purpose': 'prefetch' },
+      { 'sec-purpose': 'prefetch;prerender' },
+      { purpose: 'prefetch' },
+      { 'x-purpose': 'prefetch' },
+      { 'x-moz': 'prefetch' },
+    ];
+
+    it.each(prefetchHeaders)('does not count prefetch requests (%o)', headers => {
+      const limiter = createRateLimiter(getConfig({ maxRequests: 1 }));
+      const req = new NextRequest('http://localhost/dashboard', {
+        headers: { 'x-forwarded-for': '5.5.5.5', ...headers },
+      });
+
+      // Many prefetches must never consume the budget
+      limiter.check(req);
+      limiter.check(req);
+      expect(limiter.check(req).allowed).toBe(true);
+
+      // A real navigation from the same IP is still counted
+      const realReq = new NextRequest('http://localhost/dashboard', {
+        headers: { 'x-forwarded-for': '5.5.5.5' },
+      });
+      expect(limiter.check(realReq).allowed).toBe(true);
+      expect(limiter.check(realReq).allowed).toBe(false);
+    });
+
+    it('counts prefetch requests when skipPrefetch is false', () => {
+      const limiter = createRateLimiter(getConfig({ maxRequests: 1, skipPrefetch: false }));
+      const req = new NextRequest('http://localhost/dashboard', {
+        headers: { 'x-forwarded-for': '6.6.6.6', 'next-router-prefetch': '1' },
+      });
+
+      expect(limiter.check(req).allowed).toBe(true);
+      expect(limiter.check(req).allowed).toBe(false);
+    });
   });
 });

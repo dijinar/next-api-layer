@@ -332,7 +332,10 @@ const authProxy = createAuthProxy({
     windowMs: 60_000,           // 1 minute window
     maxRequests: 100,           // Max requests per window
     skipRoutes: ['/health', '/public/*'],
-    keyFn: (req) => req.headers.get('x-forwarded-for') || 'unknown',
+    skipPrefetch: true,         // Don't count Next.js prefetches (default: true)
+    // Header priority for the default IP-based key (Cloudflare-friendly).
+    // Ignored when a custom keyFn is provided.
+    ipHeaders: ['cf-connecting-ip', 'true-client-ip', 'x-real-ip', 'x-forwarded-for'],
     onRateLimited: (req) => NextResponse.json(
       { error: 'Too many requests' },
       { status: 429 }
@@ -346,6 +349,12 @@ const authProxy = createAuthProxy({
 - `X-RateLimit-Remaining`: Requests remaining in window
 - `X-RateLimit-Reset`: Unix timestamp when window resets
 - `Retry-After`: Seconds until retry (on 429)
+
+> **Prefetch & IP notes**
+> - Next.js `<Link>` prefetches and App Router speculative requests are **skipped by default** (`skipPrefetch: true`) so they don't burn the rate-limit budget and cause false `429`s. Set `skipPrefetch: false` to count them.
+> - The default key resolves the client IP from `ipHeaders` in order, so behind **Cloudflare** the real visitor IP (`cf-connecting-ip`) is used instead of bucketing everyone under `unknown`. Only trust these headers when you control the proxy chain.
+> - Need a custom key? Use the exported `getClientIp(req)` helper: `keyFn: (req) => 'rl:' + (getClientIp(req) ?? 'unknown')`.
+> - The store is in-memory (single instance). For horizontally-scaled deployments, enforce the authoritative limit at your backend/edge.
 
 ### Audit Logging
 

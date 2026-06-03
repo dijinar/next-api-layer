@@ -369,11 +369,25 @@ export interface RateLimitConfig {
   maxRequests?: number;
   /** 
    * Function to generate rate limit key (IP, token, user ID, etc.)
-   * @default IP-based
+   * @default IP-based (see `ipHeaders`)
    */
   keyFn?: (req: NextRequest) => string;
   /** Routes to skip rate limiting (glob patterns) */
   skipRoutes?: string[];
+  /**
+   * Skip rate limiting for Next.js / browser prefetch requests.
+   * Prefetches are triggered automatically by `<Link>` on hover/viewport and
+   * by the App Router; counting them inflates the limiter and causes false
+   * 429s after only a few visible clicks.
+   * @default true
+   */
+  skipPrefetch?: boolean;
+  /**
+   * Ordered list of headers used by the default IP-based key function to
+   * resolve the client IP. Ignored when a custom `keyFn` is provided.
+   * @default ['cf-connecting-ip', 'true-client-ip', 'x-real-ip', 'x-forwarded-for']
+   */
+  ipHeaders?: string[];
   /** Custom response when rate limited */
   onRateLimited?: (req: NextRequest) => NextResponse;
 }
@@ -432,6 +446,8 @@ export interface ResolvedRateLimitConfig {
   maxRequests: number;
   keyFn: (req: NextRequest) => string;
   skipRoutes: string[];
+  skipPrefetch: boolean;
+  ipHeaders: string[];
   onRateLimited?: (req: NextRequest) => NextResponse;
 }
 

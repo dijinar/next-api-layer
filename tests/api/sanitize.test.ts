@@ -21,7 +21,7 @@ describe('createSanitizer', () => {
     });
 
     it('preserves plain text chars (/, `, =, \')', () => {
-      expect(sanitizer.sanitizeString("Kur'an")).toBe("Kur'an");
+      expect(sanitizer.sanitizeString("O'Reilly")).toBe("O'Reilly");
       expect(sanitizer.sanitizeString('path/to/file')).toBe('path/to/file');
       expect(sanitizer.sanitizeString('x = y')).toBe('x = y');
       expect(sanitizer.sanitizeString('code `here`')).toBe('code `here`');
@@ -37,8 +37,8 @@ describe('createSanitizer', () => {
     const sanitizer = createSanitizer({ enabled: true });
 
     it('defaults to strip mode and preserves plain text', () => {
-      expect(sanitizer.sanitizeString("Afrika Kur'an Hediyesi"))
-        .toBe("Afrika Kur'an Hediyesi");
+      expect(sanitizer.sanitizeString("O'Reilly's Web Books"))
+        .toBe("O'Reilly's Web Books");
       expect(sanitizer.sanitizeString('path/to/resource'))
         .toBe('path/to/resource');
     });

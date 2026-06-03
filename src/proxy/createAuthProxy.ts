@@ -10,6 +10,7 @@ import { createTokenValidation } from './tokenValidation';
 import { createHandlers, extractLocale } from './handlers';
 import { createCsrfValidator } from './csrf';
 import { createRateLimiter } from './rateLimit';
+import type { RateLimitResult } from './rateLimit';
 import { createAuditLogger } from './audit';
 import { HEADERS } from '../shared/constants';
 
@@ -102,9 +103,12 @@ export function createAuthProxy(userConfig: AuthProxyConfig) {
     const isApiRoute = pathname.startsWith('/api');
 
     // ============ Rate Limiting ============
-    // Check early to protect against DoS
+    // Check early to protect against DoS.
+    // The result is captured once and reused when applying response headers
+    // below, so a single request is only counted a single time.
+    let rateLimitResult: RateLimitResult | undefined;
     if (config._resolved.rateLimit.enabled) {
-      const rateLimitResult = rateLimiter.check(req);
+      rateLimitResult = rateLimiter.check(req);
       
       if (!rateLimitResult.allowed) {
         await audit.rateLimitExceeded(req, { 
@@ -219,9 +223,8 @@ export function createAuthProxy(userConfig: AuthProxyConfig) {
       finalResponse = await csrf.attachCsrfCookie(finalResponse, sessionId);
     }
 
-    // Apply rate limit headers
-    if (config._resolved.rateLimit.enabled) {
-      const rateLimitResult = rateLimiter.check(req);
+    // Apply rate limit headers (reuse the count from the gate check above)
+    if (config._resolved.rateLimit.enabled && rateLimitResult) {
       finalResponse = rateLimiter.applyHeaders(finalResponse, rateLimitResult);
     }
     

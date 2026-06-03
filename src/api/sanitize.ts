@@ -10,7 +10,7 @@
  *
  * Note: Plain text characters like apostrophes ('), slashes (/), backticks (`), equals (=)
  * are NEVER escaped. They display correctly as text in modern frameworks and over-escaping
- * them breaks text content like "Kur'an", URLs, code snippets, etc.
+ * them breaks text content like "O'Reilly", URLs, code snippets, etc.
  */
 
 import type { SanitizationConfig } from '../shared/types';

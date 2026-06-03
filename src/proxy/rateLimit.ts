@@ -10,6 +10,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import type { ResolvedRateLimitConfig } from '../shared/types';
+import { isPrefetchRequest } from '../shared/prefetch';
 
 interface RateLimitEntry {
   count: number;
@@ -69,6 +70,18 @@ export function createRateLimiter(config: ResolvedRateLimitConfig) {
     
     // Skip if route matches skip patterns
     if (shouldSkip(pathname)) {
+      return {
+        allowed: true,
+        remaining: config.maxRequests,
+        resetAt: 0,
+        limit: config.maxRequests,
+      };
+    }
+
+    // Skip speculative prefetch navigations so they don't consume the budget.
+    // Next.js <Link> prefetches on hover/viewport would otherwise inflate the
+    // counter and trigger false 429s after only a few real clicks.
+    if (config.skipPrefetch && isPrefetchRequest(req)) {
       return {
         allowed: true,
         remaining: config.maxRequests,

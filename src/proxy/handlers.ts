@@ -33,7 +33,7 @@ export function extractLocale(pathname: string, i18n?: InternalProxyConfig['i18n
 
 /**
  * Strips locale prefix from pathname for route matching
- * e.g., /tr/giris → /giris, /en/dashboard → /dashboard
+ * e.g., /fr/login → /login, /en/dashboard → /dashboard
  */
 export function stripLocale(pathname: string, i18n?: InternalProxyConfig['i18n']): string {
   if (!i18n?.enabled) return pathname;

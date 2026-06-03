@@ -5,11 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.4] - 2026-06-03
+
+### Fixed
+
+- **Rate limiter double-counted every request**: `createAuthProxy` called `rateLimiter.check()` twice per request — once for the gate and once to attach `X-RateLimit-*` headers — and because `check()` increments the counter, every request consumed **two** slots. The effective limit was silently halved (e.g. `maxRequests: 100` behaved like 50). The gate result is now captured once and reused for headers.
+- **Prefetch navigations counted against the rate limit**: Next.js `<Link>` prefetches (hover/viewport) and App Router speculative requests pass through the middleware matcher and were inflating the limiter, producing false `429`s after only a handful of visible clicks. Prefetches are now detected (`Next-Router-Prefetch`, `Sec-Purpose`, `Purpose`, `X-Purpose`, `X-Moz`) and skipped by default.
+
+### Added
+
+- **`rateLimit.skipPrefetch`** (default `true`): Skip rate limiting for prefetch requests. Set to `false` to restore the old behaviour.
+- **`rateLimit.ipHeaders`**: Configurable, ordered list of headers used by the default IP-based key function. Defaults to `['cf-connecting-ip', 'true-client-ip', 'x-real-ip', 'x-forwarded-for']`, so deployments behind **Cloudflare** now resolve the real client IP out of the box instead of bucketing everyone under `unknown`. The audit logger uses the same resolution.
+- **Exported helpers**: `getClientIp(req, headerPriority?)`, `isPrefetchRequest(req)`, and `DEFAULT_IP_HEADERS` for custom `keyFn` / middleware logic.
+
+### Notes
+
+- The in-memory store remains single-instance. A pluggable / distributed (Redis) store is still tracked as a separate enhancement and is **not** part of this change.
+
 ## [0.2.3] - 2026-04-20
 
 ### Fixed
 
-- **Sanitization over-escaping bug**: Plain text characters (`/`, `'`, `` ` ``, `=`) were being HTML-escaped to entities like `&#x2F;`, `&#x27;`, `&#x3D;`, breaking text display in modern frameworks (React/Vue/Angular auto-escape output, so API-level escaping was redundant and corrupting data). Reported via Turkish text like "Kur'an Hediyesi" appearing as "Kur&#x27;an Hediyesi".
+- **Sanitization over-escaping bug**: Plain text characters (`/`, `'`, `` ` ``, `=`) were being HTML-escaped to entities like `&#x2F;`, `&#x27;`, `&#x3D;`, breaking text display in modern frameworks (React/Vue/Angular auto-escape output, so API-level escaping was redundant and corrupting data). Reported via text like "O'Reilly's Books" appearing as "O&#x27;Reilly&#x27;s Books".
 - **Default mode changed** from `'escape'` to `'strip'` — safer default for API responses, removes HTML tags without mangling plain text.
 - **`escape` mode char set minimized** to OWASP minimum: only `<`, `>`, `&`, `"` are now escaped. Apostrophes, slashes, backticks, and equals signs pass through unchanged (they do not break HTML parsing in text content, and double-quoted attributes protect against `'` injection).
 

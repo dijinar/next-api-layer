@@ -86,6 +86,7 @@ export const DEFAULT_RATE_LIMIT_CONFIG = {
   windowMs: 60 * 1000,  // 1 minute
   maxRequests: 100,
   skipRoutes: [] as string[],
+  skipPrefetch: true,
 } as const;
 
 export const DEFAULT_AUDIT_CONFIG = {

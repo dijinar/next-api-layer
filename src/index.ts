@@ -99,3 +99,7 @@ export type { AuditLogger } from './proxy/audit';
 
 export { createTokenValidation } from './proxy/tokenValidation';
 export { createHandlers } from './proxy/handlers';
+
+// Request helpers (IP resolution + prefetch detection)
+export { getClientIp, DEFAULT_IP_HEADERS } from './shared/ip';
+export { isPrefetchRequest } from './shared/prefetch';

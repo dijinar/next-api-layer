@@ -23,6 +23,7 @@ import {
   DEFAULT_RATE_LIMIT_CONFIG,
   DEFAULT_AUDIT_CONFIG,
 } from './constants';
+import { DEFAULT_IP_HEADERS, getClientIp } from './ip';
 
 /**
  * Generates a random secret for CSRF HMAC signing
@@ -37,14 +38,15 @@ function generateCsrfSecret(): string {
 }
 
 /**
- * Default rate limit key function (IP-based)
+ * Creates the default rate limit key function (IP-based).
+ * Resolves the client IP from the configured header priority list, falling
+ * back to `'unknown'` so requests without a resolvable IP share one bucket.
  */
-function defaultRateLimitKeyFn(req: NextRequest): string {
-  const forwarded = req.headers.get('x-forwarded-for');
-  const clientIpAddress = forwarded?.split(',')[0]?.trim() || 
-                          req.headers.get('x-real-ip') || 
-                          'unknown';
-  return `rl:${clientIpAddress}`;
+function createDefaultRateLimitKeyFn(ipHeaders: string[]): (req: NextRequest) => string {
+  return (req: NextRequest): string => {
+    const clientIpAddress = getClientIp(req, ipHeaders) || 'unknown';
+    return `rl:${clientIpAddress}`;
+  };
 }
 
 /**
@@ -91,12 +93,15 @@ export function resolveProxyConfig(config: AuthProxyConfig): InternalProxyConfig
   };
 
   // Resolve rate limit config
+  const ipHeaders = config.rateLimit?.ipHeaders ?? [...DEFAULT_IP_HEADERS];
   const rateLimit: ResolvedRateLimitConfig = {
     enabled: config.rateLimit?.enabled ?? false,
     windowMs: config.rateLimit?.windowMs ?? DEFAULT_RATE_LIMIT_CONFIG.windowMs,
     maxRequests: config.rateLimit?.maxRequests ?? DEFAULT_RATE_LIMIT_CONFIG.maxRequests,
-    keyFn: config.rateLimit?.keyFn ?? defaultRateLimitKeyFn,
+    keyFn: config.rateLimit?.keyFn ?? createDefaultRateLimitKeyFn(ipHeaders),
     skipRoutes: config.rateLimit?.skipRoutes ?? DEFAULT_RATE_LIMIT_CONFIG.skipRoutes,
+    skipPrefetch: config.rateLimit?.skipPrefetch ?? DEFAULT_RATE_LIMIT_CONFIG.skipPrefetch,
+    ipHeaders,
     onRateLimited: config.rateLimit?.onRateLimited,
   };
 

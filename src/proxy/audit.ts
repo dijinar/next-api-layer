@@ -7,6 +7,7 @@
 
 import { NextRequest } from 'next/server';
 import type { ResolvedAuditConfig, AuditEvent, AuditEventType } from '../shared/types';
+import { getClientIp } from '../shared/ip';
 
 /**
  * Creates an audit logger instance
@@ -23,11 +24,7 @@ export function createAuditLogger(config: ResolvedAuditConfig) {
    * Extract IP address from request
    */
   function getIp(req: NextRequest): string | null {
-    return (
-      req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-      req.headers.get('x-real-ip') ||
-      null
-    );
+    return getClientIp(req);
   }
 
   /**
