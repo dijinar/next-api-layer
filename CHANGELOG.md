@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.5] - 2026-06-08
+
+### Fixed
+
+- **`useAuth` redirected during render (setState-in-render)**: When `useAuth` was given `redirectTo` / `redirectIfFound` (and therefore `useRequireAuth` / `useRedirectIfAuth`), it called `router.replace()` synchronously in the render body. On React 18/19 this throws `Cannot update a component (\`Router\`) while rendering a different component`. Navigation is now performed inside a `useEffect`, so it runs after commit.
+- **`useRequireAuth` threw during render**: It called `throw new Error('Authentication required')` in the render phase, which aborted the component before its redirect effect could commit. The throw has been removed; the hook now relies on the effect-driven redirect. Guard your UI on `isLoading` / `isAuthenticated` while the redirect settles.
+
 ## [0.2.4] - 2026-06-03
 
 ### Fixed

@@ -20,7 +20,7 @@
  * ```
  */
 
-import { useContext } from 'react';
+import { useContext, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { AuthContext } from './AuthProvider';
 import type { AuthContextValue, UseAuthOptions, DefaultUserData } from './types';
@@ -45,20 +45,22 @@ export function useAuth<TUser = DefaultUserData>(
 
   const { redirectTo, redirectIfFound } = options;
 
-  // Handle redirects based on auth state
-  if (!context.isLoading) {
-    if (redirectTo && !context.isAuthenticated && !context.isGuest) {
-      if (typeof window !== 'undefined') {
-        router.replace(redirectTo);
-      }
-    }
+  const isLoading = context.isLoading;
+  const isAuthenticated = context.isAuthenticated;
+  const isGuest = context.isGuest;
 
-    if (redirectIfFound && context.isAuthenticated) {
-      if (typeof window !== 'undefined') {
-        router.replace(redirectIfFound);
-      }
+  // Handle redirects based on auth state.
+  // Navigation is a side effect and must run after commit, never during render,
+  // otherwise React throws "Cannot update a component while rendering a different component".
+  useEffect(() => {
+    if (isLoading) return;
+
+    if (redirectTo && !isAuthenticated && !isGuest) {
+      router.replace(redirectTo);
+    } else if (redirectIfFound && isAuthenticated) {
+      router.replace(redirectIfFound);
     }
-  }
+  }, [isLoading, isAuthenticated, isGuest, redirectTo, redirectIfFound, router]);
 
   return context;
 }
@@ -74,18 +76,15 @@ export function useUser<TUser = DefaultUserData>() {
 }
 
 /**
- * Hook for protected pages - redirects if not authenticated
- * 
+ * Hook for protected pages - redirects to `redirectTo` if not authenticated.
+ *
+ * The redirect is performed as an effect (after commit). Consumers should still
+ * guard their UI on `isLoading` / `isAuthenticated` while the redirect settles.
+ *
  * @typeParam TUser - User data type
  */
 export function useRequireAuth<TUser = DefaultUserData>(redirectTo = '/login') {
-  const auth = useAuth<TUser>({ redirectTo });
-  
-  if (!auth.isLoading && !auth.isAuthenticated) {
-    throw new Error('Authentication required');
-  }
-  
-  return auth;
+  return useAuth<TUser>({ redirectTo });
 }
 
 /**
