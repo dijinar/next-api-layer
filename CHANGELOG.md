@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-06-17
+
+This is a **security-hardening release**. It closes vulnerabilities across the
+CSRF layer, the middleware header pipeline, the response sanitizer, the rate
+limiter, and the proxy error path. Please read the **Breaking Changes** before
+upgrading.
+
+### Security
+
+- **CSRF tokens are now cryptographically verified (token forgery fixed)**: The double-submit strategy previously accepted _any_ request whose cookie and header values matched, so an attacker able to plant a cookie on a sibling subdomain could forge a valid pair. Tokens are now HMAC-SHA256 signed (`<hmac>.<randomValue>`) and the signature is verified on every state-changing request. Forged or tampered tokens are rejected with `invalid-token-signature`.
+- **Constant-time CSRF comparisons**: Cookie/header equality and HMAC verification both use a constant-time comparison to remove timing side-channels.
+- **Insecure randomness fallback removed (fail-closed)**: CSRF token and secret generation now _require_ the Web Crypto API and **throw** if it is unavailable, instead of silently falling back to `Math.random()`. An insecure token can never be issued.
+- **Spoofed internal headers stripped (auth impersonation fixed)**: Inbound requests carrying `x-auth-user`, `x-refreshed-token`, or `x-locale` could previously impersonate an authenticated user or override the resolved locale. These internal headers are now stripped from every incoming request before the proxy sets its own verified values — on all paths (pass-through, refresh, valid-token, excluded, auth-API) — and are also removed before the upstream backend fetch.
+- **i18n middleware can no longer bypass an auth redirect (redirect-precedence)**: When the auth layer produced a terminal response (e.g. a redirect to `/login` for a protected route, or a `401` JSON), a subsequent i18n `next()`/`rewrite()` could discard it and serve the protected page. Terminal auth responses now win over i18n forwards; only the i18n cookies (e.g. `NEXT_LOCALE`) are carried over.
+- **Allow-list sanitizer XSS bypass fixed**: In `mode: 'allowList'`, dangerous attributes on otherwise-allowed tags (inline event handlers like `onerror`, `style`, and `javascript:` / `data:` URLs in `href` / `src`) were passed through. Attributes on allow-listed tags are now sanitized, and `data:` / dangerous-URL detection was broadened.
+- **Rate-limit prefetch bypass narrowed**: `skipPrefetch` previously skipped the limiter for _any_ method carrying a prefetch header, so an attacker could evade rate limiting on `POST` (etc.) by adding `Next-Router-Prefetch`. Prefetch skipping is now restricted to safe (`GET` / `HEAD`) methods.
+- **Proxy error responses no longer leak internals**: The `502` path no longer returns `error.message` to the client; it logs the error server-side (`[Proxy Error]`) and returns a generic message.
+- **CSRF secret hygiene warning**: When CSRF is enabled without an explicit `csrf.secret`, the library now logs a warning and uses a per-process ephemeral secret (tokens will not validate across instances/restarts until you set one).
+
+### Breaking Changes
+
+- **`createCsrfValidator` is now fully async.** `validateRequest()`, `generateToken()`, and `attachCsrfCookie()` return promises. If you call the validator directly, you must `await` the results:
+
+  ```diff
+  - const result = csrf.validateRequest(req);
+  + const result = await csrf.validateRequest(req);
+  ```
+
+  Using `createAuthProxy` requires no change — it already awaits internally.
+
+- **CSRF token format changed to `<hmac>.<randomValue>`.** Tokens minted by `0.2.x` are not valid in `0.3.0` and vice-versa. Deploy all instances together; clients receive a fresh token automatically on their next safe request, so no user action is required.
+- **Web Crypto is now required for CSRF.** `crypto.subtle` and `crypto.getRandomValues` must be available (Node.js 18+ or any Edge runtime). The library throws a clear error instead of degrading to insecure randomness.
+- **Set `csrf.secret` explicitly in production.** Without it, tokens are signed with a per-process random secret and will fail to validate across multiple instances or after a restart.
+
 ## [0.2.5] - 2026-06-08
 
 ### Fixed

@@ -173,32 +173,33 @@ export const api = createApiClient({
 ```
 
 ```ts
-// Usage - ONE LINE anywhere in your app!
+// Usage - import anywhere in your app
 import { api } from '@/lib/api';
 
-// Simple GET
-const { data, success } = await api.get('users/profile');
+// Every method returns the raw `Response` — read it however you need
+const res = await api.get('users/profile');
+const { data, success } = await res.json();
 
-// POST with body
-const result = await api.post('projects', { body: { name: 'New Project' } });
+// POST with a body (passed directly, not wrapped in `{ body }`)
+const created = await api.post('projects', { name: 'New Project' });
 
-// Per-request sanitization control
-const rawHtml = await api.get('editor/content', { skipSanitize: true });
+// Per-request sanitization control — sanitization applies to the request body
+const article = await api.post('editor/content', body, { skipSanitize: true });
 
-// Skip specific fields only (sanitize others)
+// Skip specific fields only (sanitize the rest)
 const post = await api.post('blog/create', formData, {
   isFormData: true,
   skipSanitizeFields: ['content', 'raw_html'],
 });
 
-// With query params
-const users = await api.get('users', { params: { page: 1, limit: 20 } });
+// Query params go in the endpoint string
+const users = await api.get('users?page=1&limit=20');
 
 // Per-request timeout (overrides global)
 const quickCheck = await api.get('health', { timeout: 5000 });
 
-// Override method spoofing per-request
-await api.put('resource/1', { body: data }, { methodSpoofing: false });
+// Override method spoofing per-request (body passed directly)
+await api.put('resource/1', data, { methodSpoofing: false });
 ```
 
 ### 3. Setup Auth Provider (Client-Side)
@@ -285,7 +286,7 @@ Behind the scenes:    8-stage secure pipeline
 2. **Token Validation** - Validate with backend, handle expiry
 3. **Token Refresh** - Auto-refresh expired tokens
 4. **Request Deduplication** - Prevent concurrent validation calls
-5. **XSS Sanitization** - Clean all response data
+5. **XSS Sanitization** - Sanitize request payloads before they reach the backend
 6. **i18n Injection** - Add language parameter
 7. **Method Spoofing** - Laravel PUT/PATCH support
 8. **Error Handling** - Consistent error format
@@ -306,6 +307,7 @@ const authProxy = createAuthProxy({
   csrf: {
     enabled: true,
     strategy: 'both',           // 'fetch-metadata' | 'double-submit' | 'both'
+    secret: process.env.CSRF_SECRET!, // HMAC signing key — set a stable value in production
     cookieName: '__csrf',       // Cookie name for token
     headerName: 'x-csrf-token', // Header name for token
     ignoreMethods: ['GET', 'HEAD', 'OPTIONS'],
@@ -317,6 +319,7 @@ const authProxy = createAuthProxy({
 **Behavior:**
 - Safe methods (`GET`, `HEAD`, `OPTIONS`) are automatically skipped
 - Unsafe methods are validated using Fetch Metadata headers and/or double-submit cookie
+- Tokens are HMAC-SHA256 signed; **set a stable `csrf.secret` in production** so tokens validate across instances and restarts (without it a per-process ephemeral secret is used and a warning is logged)
 - Failed validation returns `403 Forbidden` and emits `csrf:fail` audit event
 
 ### Rate Limiting
@@ -594,6 +597,7 @@ interface ApiClientConfig {
     mode?: 'strip' | 'escape' | 'allowList'; // Default: 'strip'
     allowedTags?: string[];     // Tags allowed in 'allowList' mode
     skipFields?: string[];      // Fields to skip sanitization
+    skipEndpoints?: string[];   // Endpoints to skip (glob patterns supported)
   };
   
   i18n?: {

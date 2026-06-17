@@ -81,7 +81,13 @@ export function createRateLimiter(config: ResolvedRateLimitConfig) {
     // Skip speculative prefetch navigations so they don't consume the budget.
     // Next.js <Link> prefetches on hover/viewport would otherwise inflate the
     // counter and trigger false 429s after only a few real clicks.
-    if (config.skipPrefetch && isPrefetchRequest(req)) {
+    //
+    // Only GET/HEAD requests are ever prefetched, so restrict the skip to safe
+    // methods. This stops an attacker from bypassing the limit on a
+    // state-changing endpoint by forging a prefetch header on a POST/PUT/etc.
+    const method = req.method.toUpperCase();
+    const isSafeMethod = method === 'GET' || method === 'HEAD';
+    if (config.skipPrefetch && isSafeMethod && isPrefetchRequest(req)) {
       return {
         allowed: true,
         remaining: config.maxRequests,

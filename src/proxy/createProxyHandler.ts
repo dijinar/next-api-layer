@@ -163,6 +163,13 @@ export function createProxyHandler(config: ProxyHandlerConfig) {
       // Remove skip-auth header (internal use only)
       headers.delete(HEADERS.SKIP_AUTH);
 
+      // Strip library-internal trust headers so a client can never inject them
+      // into the backend request. These are only ever set server-side by the
+      // auth middleware after validating the token.
+      headers.delete(HEADERS.AUTH_USER);
+      headers.delete(HEADERS.REFRESHED_TOKEN);
+      headers.delete(HEADERS.LOCALE);
+
       // Allow custom request transformation
       const finalHeaders = transformRequest 
         ? await transformRequest(req, headers) 
@@ -225,11 +232,11 @@ export function createProxyHandler(config: ProxyHandlerConfig) {
     } catch (error) {
       console.error('[Proxy Error]', error);
       
+      // Do not leak backend/internal error details to the client.
       return NextResponse.json(
         { 
           success: false, 
           message: 'Proxy error: Unable to connect to backend',
-          error: error instanceof Error ? error.message : 'Unknown error',
         },
         { status: 502 }
       );

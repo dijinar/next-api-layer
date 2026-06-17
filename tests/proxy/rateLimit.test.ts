@@ -97,5 +97,19 @@ describe('createRateLimiter', () => {
       expect(limiter.check(req).allowed).toBe(true);
       expect(limiter.check(req).allowed).toBe(false);
     });
+
+    it('counts state-changing (POST) requests even with a prefetch header', () => {
+      // Prefetches are always GET/HEAD; a POST carrying a forged prefetch
+      // header must never bypass the limiter.
+      const limiter = createRateLimiter(getConfig({ maxRequests: 1 }));
+      const make = () =>
+        new NextRequest('http://localhost/api/transfer', {
+          method: 'POST',
+          headers: { 'x-forwarded-for': '7.7.7.7', 'next-router-prefetch': '1' },
+        });
+
+      expect(limiter.check(make()).allowed).toBe(true);
+      expect(limiter.check(make()).allowed).toBe(false);
+    });
   });
 });

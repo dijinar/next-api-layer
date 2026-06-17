@@ -1,10 +1,10 @@
 /**
  * XSS Sanitization utilities
- * Zero-dependency, lightweight sanitizer for API responses
+ * Zero-dependency, lightweight sanitizer for outgoing request bodies
  * 
  * Modes:
  * - 'strip' (default): Removes HTML tags, preserves plain text characters
- *   Best for API responses rendered in React/Vue/Angular (frameworks auto-escape text)
+ *   Best for request bodies later rendered in React/Vue/Angular (frameworks auto-escape text)
  * - 'escape': Escapes only HTML-sensitive chars (<, >, &) - for dangerouslySetInnerHTML contexts
  * - 'allowList': Only allows specified tags (for rich-text / CMS content)
  *
@@ -80,7 +80,17 @@ function isSafeUrl(value: string): boolean {
 const SCRIPT_PATTERN = /<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi;
 const EVENT_HANDLER_PATTERN = /\s*on\w+\s*=\s*["'][^"']*["']/gi;
 const JAVASCRIPT_URL_PATTERN = /javascript\s*:/gi;
-const DATA_URL_PATTERN = /data\s*:[^;]*;base64/gi;
+// Dangerous data: URLs — scriptable media types (html/xml/svg) or any base64 blob.
+const DATA_URL_PATTERN = /data\s*:\s*(?:text\/html|application\/(?:xml|xhtml\+xml)|image\/svg\+xml|[^,;\s]*;base64)/gi;
+
+// Loose event-handler matcher (quoted OR unquoted, e.g. onerror=alert(1)).
+// Only applied while cleaning the attributes of allow-listed tags, so it does
+// not risk corrupting plain text elsewhere.
+const TAG_EVENT_HANDLER_PATTERN = /\s*on\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi;
+// style="" can smuggle expression()/url(javascript:) in legacy engines.
+const TAG_STYLE_PATTERN = /\s*style\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi;
+// Any attribute whose value uses a dangerous URL scheme (href, src, formaction, xlink:href, ...).
+const TAG_DANGEROUS_URL_ATTR_PATTERN = /\s*[a-zA-Z][\w:-]*\s*=\s*(?:"\s*(?:javascript|vbscript|data)\s*:[^"]*"|'\s*(?:javascript|vbscript|data)\s*:[^']*'|(?:javascript|vbscript|data)\s*:[^\s>]+)/gi;
 
 /**
  * Escapes HTML entities in a string
@@ -110,6 +120,18 @@ function stripHtml(str: string): string {
 }
 
 /**
+ * Cleans an allow-listed opening tag: strips event-handler and style
+ * attributes and neutralises any attribute whose value uses a dangerous URL
+ * scheme. Applied only to tags that survived the allow-list filter.
+ */
+function sanitizeTagAttributes(tag: string): string {
+  return tag
+    .replace(TAG_EVENT_HANDLER_PATTERN, '')
+    .replace(TAG_STYLE_PATTERN, '')
+    .replace(TAG_DANGEROUS_URL_ATTR_PATTERN, '');
+}
+
+/**
  * Sanitizes HTML while allowing specific tags
  */
 function sanitizeWithAllowList(str: string, allowedTags: string[]): string {
@@ -130,6 +152,10 @@ function sanitizeWithAllowList(str: string, allowedTags: string[]): string {
   
   // Remove non-allowed tags
   result = result.replace(allowedRegex, '');
+
+  // Clean attributes on the remaining (allow-listed) opening tags so an allowed
+  // tag like <a> or <img> can't carry onerror=, style=, or javascript:/data: URLs.
+  result = result.replace(/<[a-zA-Z][^>]*>/g, sanitizeTagAttributes);
   
   return result;
 }

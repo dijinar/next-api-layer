@@ -104,6 +104,44 @@ describe('createSanitizer', () => {
     });
   });
 
+  describe('allowList mode - attribute hardening', () => {
+    const sanitizer = createSanitizer({
+      enabled: true,
+      mode: 'allowList',
+      allowedTags: ['a', 'b', 'img'],
+    });
+
+    it('strips unquoted event handlers on allowed tags', () => {
+      const out = sanitizer.sanitizeString('<img src="x" onerror=alert(1)>');
+      expect(out).not.toContain('onerror');
+      expect(out).toContain('<img');
+    });
+
+    it('strips quoted event handlers on allowed tags', () => {
+      const out = sanitizer.sanitizeString('<img src="x" onload="steal()">');
+      expect(out).not.toContain('onload');
+    });
+
+    it('strips style attributes on allowed tags', () => {
+      expect(sanitizer.sanitizeString('<b style="color:red">hi</b>'))
+        .toBe('<b>hi</b>');
+    });
+
+    it('neutralises javascript: URLs on allowed tags', () => {
+      const out = sanitizer.sanitizeString('<a href="javascript:alert(1)">go</a>');
+      expect(out.toLowerCase()).not.toContain('javascript:');
+    });
+
+    it('neutralises data:text/html URLs on allowed tags', () => {
+      const out = sanitizer.sanitizeString('<a href="data:text/html,x">link</a>');
+      expect(out.toLowerCase()).not.toContain('data:text/html');
+    });
+
+    it('keeps clean allowed tags intact', () => {
+      expect(sanitizer.sanitizeString('<b>keep</b>')).toBe('<b>keep</b>');
+    });
+  });
+
   describe('disabled sanitizer', () => {
     const sanitizer = createSanitizer({ enabled: false });
 

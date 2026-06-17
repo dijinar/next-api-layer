@@ -9,6 +9,42 @@ import { HEADERS, TOKEN_TYPES } from '../shared/constants';
 import type { TokenValidation } from './tokenValidation';
 
 /**
+ * Library-internal request headers that downstream Server Components / route
+ * handlers trust because the middleware sets them *after* validating the token
+ * (e.g. `getServerUser` reads `x-auth-user`, `createApiClient` reads
+ * `x-refreshed-token`). Any value present on the *incoming* request is
+ * attacker-controlled and MUST be removed before the request is forwarded,
+ * otherwise a caller could forge these headers and impersonate any user.
+ */
+const INTERNAL_REQUEST_HEADERS = [
+  HEADERS.AUTH_USER,
+  HEADERS.REFRESHED_TOKEN,
+  HEADERS.LOCALE,
+] as const;
+
+/**
+ * Returns a copy of the incoming request headers with every library-internal
+ * header removed, so forged values can never reach downstream code.
+ */
+export function sanitizeRequestHeaders(req: NextRequest): Headers {
+  const headers = new Headers(req.headers);
+  for (const name of INTERNAL_REQUEST_HEADERS) {
+    headers.delete(name);
+  }
+  return headers;
+}
+
+/**
+ * Drop-in replacement for a bare `NextResponse.next()` that forwards request
+ * headers stripped of any client-supplied internal headers. Use this on every
+ * pass-through path so untrusted `x-auth-user` / `x-refreshed-token` values are
+ * never propagated.
+ */
+export function nextWithSanitizedHeaders(req: NextRequest): NextResponse {
+  return NextResponse.next({ request: { headers: sanitizeRequestHeaders(req) } });
+}
+
+/**
  * Extracts locale from pathname based on i18n config
  * e.g., /en/dashboard → 'en', /dashboard → defaultLocale or null
  */
@@ -160,12 +196,12 @@ export function createHandlers(
         let response: NextResponse;
         
         if (isApiRoute) {
-          response = NextResponse.next();
+          response = nextWithSanitizedHeaders(req);
         } else if (isProtectedRoute(req.nextUrl.pathname)) {
           // Redirect to login if protected route
           response = NextResponse.redirect(new URL('/login', origin));
         } else {
-          response = NextResponse.next();
+          response = nextWithSanitizedHeaders(req);
         }
         
         response.cookies.set(cookies.guest, guestAccessToken, {
@@ -186,7 +222,7 @@ export function createHandlers(
       return NextResponse.redirect(new URL('/login', origin));
     }
     
-    return NextResponse.next();
+    return nextWithSanitizedHeaders(req);
   }
 
   /**
@@ -213,8 +249,10 @@ export function createHandlers(
           const newTokenInfo = await validation.getTokenInfo(refreshResult.newToken);
           
           if (newTokenInfo.isValid) {
-            // Successful refresh
-            const requestHeaders = new Headers(req.headers);
+            // Successful refresh. Start from sanitized headers so any forged
+            // x-auth-user / x-refreshed-token from the client is dropped before
+            // we set the verified values below.
+            const requestHeaders = sanitizeRequestHeaders(req);
             
             if (newTokenInfo.userData) {
               // Base64 encode to handle non-ASCII characters (Turkish, etc.) in HTTP headers
@@ -265,7 +303,9 @@ export function createHandlers(
     }
 
     // ===== TOKEN VALID =====
-    const requestHeaders = new Headers(req.headers);
+    // Start from sanitized headers so a forged x-auth-user can never survive,
+    // even when the validated token carries no userData (set below).
+    const requestHeaders = sanitizeRequestHeaders(req);
     
     if (userData) {
       // Base64 encode to handle non-ASCII characters (Turkish, etc.) in HTTP headers

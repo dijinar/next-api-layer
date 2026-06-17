@@ -24,16 +24,18 @@ export function createCsrfValidator(config: ResolvedCsrfConfig) {
    * Generate HMAC-signed CSRF token
    * Format: hmac.randomValue
    */
-  async function generateToken(sessionId: string): Promise<string> {
+  async function generateToken(_sessionId?: string): Promise<string> {
     const randomValue = generateRandomValue();
-    const hmac = await computeHmac(config.secret, sessionId, randomValue);
+    // HMAC binds the token to the server secret so it can be verified on
+    // validation. The random value is what the double-submit pair compares.
+    const hmac = await computeHmac(config.secret, randomValue);
     return `${hmac}.${randomValue}`;
   }
 
   /**
    * Validate CSRF request using configured strategy
    */
-  function validateRequest(req: NextRequest): CsrfValidationResult {
+  async function validateRequest(req: NextRequest): Promise<CsrfValidationResult> {
     const method = req.method.toUpperCase();
     
     // Skip safe methods
@@ -121,7 +123,7 @@ export function createCsrfValidator(config: ResolvedCsrfConfig) {
   /**
    * Validate using Double-Submit Cookie pattern with HMAC
    */
-  function validateDoubleSubmit(req: NextRequest): CsrfValidationResult {
+  async function validateDoubleSubmit(req: NextRequest): Promise<CsrfValidationResult> {
     // Get token from cookie
     const cookieToken = req.cookies.get(config.cookieName)?.value;
     
@@ -141,10 +143,19 @@ export function createCsrfValidator(config: ResolvedCsrfConfig) {
       return { valid: false, reason: 'token-mismatch' };
     }
 
-    // Validate HMAC structure
+    // Validate token structure: "<hmac>.<randomValue>"
     const parts = cookieToken.split('.');
-    if (parts.length !== 2) {
+    if (parts.length !== 2 || !parts[0] || !parts[1]) {
       return { valid: false, reason: 'invalid-token-format' };
+    }
+
+    // Verify the HMAC signature so attacker-injected/forged tokens (e.g. set via
+    // a sibling-subdomain cookie) are rejected. Without this check the "signed"
+    // token would degrade to a plain, forgeable double-submit value.
+    const [providedHmac, randomValue] = parts;
+    const expectedHmac = await computeHmac(config.secret, randomValue);
+    if (!constantTimeEqual(providedHmac, expectedHmac)) {
+      return { valid: false, reason: 'invalid-token-signature' };
     }
 
     return { valid: true };
@@ -182,53 +193,50 @@ export function createCsrfValidator(config: ResolvedCsrfConfig) {
  * Generate cryptographically random value
  */
 function generateRandomValue(): string {
-  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
-    const array = new Uint8Array(32);
-    crypto.getRandomValues(array);
-    return Array.from(array, b => b.toString(16).padStart(2, '0')).join('');
+  if (typeof crypto === 'undefined' || !crypto.getRandomValues) {
+    throw new Error(
+      'next-api-layer: Web Crypto API (crypto.getRandomValues) is unavailable; ' +
+      'cannot generate a secure CSRF token. Use a Node.js 18+ or Edge runtime.'
+    );
   }
-  // Fallback (less secure, for edge cases)
-  return Math.random().toString(36).substring(2) + Date.now().toString(36);
+  const array = new Uint8Array(32);
+  crypto.getRandomValues(array);
+  return Array.from(array, b => b.toString(16).padStart(2, '0')).join('');
 }
 
 /**
  * Compute HMAC-SHA256
  */
 async function computeHmac(
-  secret: string, 
-  sessionId: string, 
+  secret: string,
   randomValue: string
 ): Promise<string> {
-  const message = `${sessionId.length}!${sessionId}!${randomValue.length}!${randomValue}`;
+  // Length-prefixed message keeps the encoding unambiguous.
+  const message = `${randomValue.length}!${randomValue}`;
   
-  if (typeof crypto !== 'undefined' && crypto.subtle) {
-    const encoder = new TextEncoder();
-    const keyData = encoder.encode(secret);
-    const messageData = encoder.encode(message);
-    
-    const hmacKey = await crypto.subtle.importKey(
-      'raw',
-      keyData,
-      { name: 'HMAC', hash: 'SHA-256' },
-      false,
-      ['sign']
+  if (typeof crypto === 'undefined' || !crypto.subtle) {
+    throw new Error(
+      'next-api-layer: Web Crypto API (crypto.subtle) is unavailable; ' +
+      'cannot compute a secure CSRF HMAC. Use a Node.js 18+ or Edge runtime.'
     );
-    
-    const signature = await crypto.subtle.sign('HMAC', hmacKey, messageData);
-    return Array.from(new Uint8Array(signature), b => 
-      b.toString(16).padStart(2, '0')
-    ).join('');
   }
+
+  const encoder = new TextEncoder();
+  const keyData = encoder.encode(secret);
+  const messageData = encoder.encode(message);
   
-  // Fallback (less secure)
-  let hash = 0;
-  const hashInput = secret + message;
-  for (let i = 0; i < hashInput.length; i++) {
-    const char = hashInput.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash;
-  }
-  return Math.abs(hash).toString(16);
+  const hmacKey = await crypto.subtle.importKey(
+    'raw',
+    keyData,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  
+  const signature = await crypto.subtle.sign('HMAC', hmacKey, messageData);
+  return Array.from(new Uint8Array(signature), b => 
+    b.toString(16).padStart(2, '0')
+  ).join('');
 }
 
 /**

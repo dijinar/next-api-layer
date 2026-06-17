@@ -7,18 +7,158 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { AuthProxyConfig, AuthResult } from '../shared/types';
 import { resolveProxyConfig } from '../shared/config';
 import { createTokenValidation } from './tokenValidation';
-import { createHandlers, extractLocale } from './handlers';
+import { createHandlers, extractLocale, nextWithSanitizedHeaders } from './handlers';
 import { createCsrfValidator } from './csrf';
 import { createRateLimiter } from './rateLimit';
 import type { RateLimitResult } from './rateLimit';
 import { createAuditLogger } from './audit';
 import { HEADERS } from '../shared/constants';
 
+// Next.js encodes request-header overrides (set via
+// `NextResponse.next({ request: { headers } })`) as these response headers.
+const MIDDLEWARE_OVERRIDE_KEY = 'x-middleware-override-headers';
+const MIDDLEWARE_REQUEST_PREFIX = 'x-middleware-request-';
+
+// Library-internal request headers (lower-cased) that downstream code trusts.
+const INTERNAL_OVERRIDE_HEADERS = [
+  HEADERS.AUTH_USER,
+  HEADERS.REFRESHED_TOKEN,
+  HEADERS.LOCALE,
+].map(h => h.toLowerCase());
+
 /**
- * Merge two NextResponse objects, preserving headers and cookies from both
- * Target response takes priority for conflicts
+ * Whether a response forwards the incoming request to the app
+ * (`NextResponse.next()` / `NextResponse.rewrite()`), as opposed to a terminal
+ * response (redirect / JSON / error) that ends the request-response cycle.
  */
-function mergeResponses(source: NextResponse, target: NextResponse): NextResponse {
+function isForwardingResponse(res: NextResponse): boolean {
+  return (
+    res.headers.has('x-middleware-next') ||
+    res.headers.has('x-middleware-rewrite')
+  );
+}
+
+/**
+ * Keeps the auth middleware authoritative over the library-internal request
+ * headers (`x-auth-user` / `x-refreshed-token` / `x-locale`) when our response
+ * is swapped out by a third-party one (i18n middleware / afterAuth hook).
+ *
+ * Next only rewrites the downstream request headers when a response carries an
+ * `x-middleware-override-headers` list — and then that list is authoritative
+ * (any original header NOT in it is dropped). Two cases must be handled so a
+ * forged internal header can never reach `getServerUser` / `createApiClient`:
+ *
+ *  - target forwards WITH an override list (e.g. next-intl `next({ request })`):
+ *    reconcile the list so our sanitized/verified internal headers win.
+ *  - target forwards WITHOUT an override list (plain `next()` / `rewrite()`):
+ *    Next would pass the ORIGINAL request headers through verbatim, so we seed
+ *    a list from the incoming request and then strip the internal headers.
+ *
+ * Non-forwarding responses (redirect / JSON / terminal) never propagate request
+ * headers to the app, so they are a safe no-op.
+ */
+function preserveRequestOverrides(
+  req: NextRequest,
+  source: NextResponse,
+  target: NextResponse
+): void {
+  // Only `next()` / `rewrite()` responses forward the request to the app.
+  if (!isForwardingResponse(target)) return;
+
+  const sourceList = source.headers.get(MIDDLEWARE_OVERRIDE_KEY);
+  const sourceNames = new Set(
+    (sourceList ? sourceList.split(',') : [])
+      .map(n => n.trim().toLowerCase())
+      .filter(Boolean)
+  );
+
+  let targetList = target.headers.get(MIDDLEWARE_OVERRIDE_KEY);
+
+  // Target forwards but carries no override list → Next would forward the
+  // ORIGINAL request headers (including a forged internal header) untouched.
+  // Seed the full original header set so the non-internal headers stay
+  // byte-for-byte identical to the pass-through behaviour while the internal
+  // ones become ours to strip below.
+  if (!targetList) {
+    const seeded: string[] = [];
+    for (const [name, value] of req.headers) {
+      const lower = name.toLowerCase();
+      target.headers.set(`${MIDDLEWARE_REQUEST_PREFIX}${lower}`, value);
+      seeded.push(lower);
+    }
+    targetList = seeded.join(',');
+  }
+
+  const targetNames = new Set(
+    targetList.split(',').map(n => n.trim().toLowerCase()).filter(Boolean)
+  );
+
+  // 1. Bring over request headers the source overrode but the target did not.
+  for (const name of sourceNames) {
+    if (targetNames.has(name)) continue;
+    const value = source.headers.get(`${MIDDLEWARE_REQUEST_PREFIX}${name}`);
+    if (value === null) continue;
+    target.headers.set(`${MIDDLEWARE_REQUEST_PREFIX}${name}`, value);
+    targetNames.add(name);
+  }
+
+  // 2. For internal headers the source is authoritative: its sanitized value
+  //    (or deliberate removal) MUST win over whatever the third-party response
+  //    copied from the original — otherwise a forged value could resurface.
+  for (const header of INTERNAL_OVERRIDE_HEADERS) {
+    const requestKey = `${MIDDLEWARE_REQUEST_PREFIX}${header}`;
+    if (sourceNames.has(header)) {
+      const value = source.headers.get(requestKey);
+      if (value !== null) {
+        target.headers.set(requestKey, value);
+        targetNames.add(header);
+      }
+    } else {
+      // Strip it: KEEP the name in the override list but drop its
+      // `x-middleware-request-*` value. Next then forces the downstream header
+      // to `undefined` (removes it). Dropping it from the list instead would,
+      // once the list is empty, make Next fall back to forwarding the ORIGINAL
+      // request headers verbatim — resurrecting the forged value. Keeping it
+      // listed-but-valueless guarantees the strip in every case.
+      target.headers.delete(requestKey);
+      targetNames.add(header);
+    }
+  }
+
+  if (targetNames.size > 0) {
+    target.headers.set(MIDDLEWARE_OVERRIDE_KEY, Array.from(targetNames).join(','));
+  } else {
+    target.headers.delete(MIDDLEWARE_OVERRIDE_KEY);
+  }
+}
+
+/**
+ * Merge two NextResponse objects, preserving headers and cookies from both.
+ * Target response takes priority for conflicts.
+ *
+ * When `options.sourceWinsIfTerminal` is set, a terminal `source` (a redirect
+ * or JSON/error response that does NOT forward the request) is treated as an
+ * authoritative routing decision and is returned as-is — a third-party forward
+ * / rewrite (the i18n middleware) must never replace it, otherwise a protected
+ * page could still be served despite our auth redirect (auth bypass).
+ */
+function mergeResponses(
+  req: NextRequest,
+  source: NextResponse,
+  target: NextResponse,
+  options: { sourceWinsIfTerminal?: boolean } = {}
+): NextResponse {
+  // Our terminal auth/routing decision wins: keep it, but carry over the other
+  // side's cookies (e.g. `NEXT_LOCALE`) so locale state survives the redirect.
+  if (options.sourceWinsIfTerminal && !isForwardingResponse(source)) {
+    target.cookies.getAll().forEach(cookie => {
+      if (!source.cookies.get(cookie.name)) {
+        source.cookies.set(cookie.name, cookie.value);
+      }
+    });
+    return source;
+  }
+
   // Copy critical headers from source to target (if not already set)
   const criticalHeaders = [HEADERS.LOCALE, HEADERS.AUTH_USER, HEADERS.REFRESHED_TOKEN];
   
@@ -28,6 +168,10 @@ function mergeResponses(source: NextResponse, target: NextResponse): NextRespons
       target.headers.set(header, value);
     }
   }
+
+  // Keep the sanitized/verified request-header override authoritative so a
+  // forged x-auth-user can't survive when the response is swapped out.
+  preserveRequestOverrides(req, source, target);
   
   // Copy cookies from source to target (if not already set)
   source.cookies.getAll().forEach(cookie => {
@@ -122,7 +266,7 @@ export function createAuthProxy(userConfig: AuthProxyConfig) {
     // ============ CSRF Protection ============
     // Check before any state-changing operations
     if (config._resolved.csrf.enabled) {
-      const csrfResult = csrf.validateRequest(req);
+      const csrfResult = await csrf.validateRequest(req);
       
       if (!csrfResult.valid) {
         await audit.csrfFail(req, { reason: csrfResult.reason });
@@ -154,7 +298,7 @@ export function createAuthProxy(userConfig: AuthProxyConfig) {
     // Skip excluded paths
     const excludedPaths = config.excludedPaths ?? [];
     if (excludedPaths.some(path => pathname.startsWith(path))) {
-      return applyMiddlewaresAndHooks(req, NextResponse.next(), { isAuthenticated: false, isGuest: false, tokenType: null, user: null });
+      return applyMiddlewaresAndHooks(req, nextWithSanitizedHeaders(req), { isAuthenticated: false, isGuest: false, tokenType: null, user: null });
     }
 
     // Skip auth API endpoints (they handle their own auth)
@@ -167,7 +311,7 @@ export function createAuthProxy(userConfig: AuthProxyConfig) {
     ];
     
     if (authApiPaths.includes(pathname)) {
-      return applyMiddlewaresAndHooks(req, NextResponse.next(), { isAuthenticated: false, isGuest: false, tokenType: null, user: null });
+      return applyMiddlewaresAndHooks(req, nextWithSanitizedHeaders(req), { isAuthenticated: false, isGuest: false, tokenType: null, user: null });
     }
 
     // Get tokens from cookies
@@ -241,8 +385,12 @@ export function createAuthProxy(userConfig: AuthProxyConfig) {
     // Apply i18n middleware if configured
     if (config.i18n?.middleware) {
       const intlResponse = await Promise.resolve(config.i18n.middleware(req));
-      // Merge library's response headers into i18n response
-      finalResponse = mergeResponses(response, intlResponse);
+      // Merge library's response headers into i18n response. Our own redirect /
+      // terminal response stays authoritative so i18n can't forward past an
+      // auth gate.
+      finalResponse = mergeResponses(req, response, intlResponse, {
+        sourceWinsIfTerminal: true,
+      });
     }
     
     // Ensure x-locale is set as response header (not just request header)
@@ -258,7 +406,7 @@ export function createAuthProxy(userConfig: AuthProxyConfig) {
     if (config.afterAuth) {
       const hookResponse = await config.afterAuth(req, finalResponse, authResult);
       // Merge previous response headers into hook's response
-      finalResponse = mergeResponses(finalResponse, hookResponse);
+      finalResponse = mergeResponses(req, finalResponse, hookResponse);
     }
     
     return finalResponse;

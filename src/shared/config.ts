@@ -29,12 +29,19 @@ import { DEFAULT_IP_HEADERS, getClientIp } from './ip';
  * Generates a random secret for CSRF HMAC signing
  */
 function generateCsrfSecret(): string {
-  // Use crypto if available (Node.js)
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+  // Prefer randomUUID, fall back to getRandomValues; never derive a security
+  // secret from a weak, predictable source.
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID() + crypto.randomUUID();
   }
-  // Fallback: timestamp + random
-  return `${Date.now()}-${Math.random().toString(36).substring(2)}`;
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    const array = new Uint8Array(32);
+    crypto.getRandomValues(array);
+    return Array.from(array, b => b.toString(16).padStart(2, '0')).join('');
+  }
+  throw new Error(
+    'next-api-layer: Web Crypto API is unavailable; set csrf.secret explicitly.'
+  );
 }
 
 /**
@@ -79,9 +86,20 @@ export function resolveProxyConfig(config: AuthProxyConfig): InternalProxyConfig
     ...config.endpoints,
   };
 
+  // Warn loudly when CSRF is enabled without a stable secret: an auto-generated
+  // per-process secret invalidates tokens on restart and across instances.
+  const csrfEnabled = config.csrf?.enabled ?? false;
+  if (csrfEnabled && !config.csrf?.secret) {
+    console.warn(
+      '[next-api-layer] csrf.enabled is true but csrf.secret is not set. ' +
+      'A random per-process secret will be used, which breaks CSRF validation ' +
+      'across restarts and multiple instances. Set a stable csrf.secret (e.g. from an env var).'
+    );
+  }
+
   // Resolve CSRF config
   const csrf: ResolvedCsrfConfig = {
-    enabled: config.csrf?.enabled ?? false,
+    enabled: csrfEnabled,
     strategy: config.csrf?.strategy ?? DEFAULT_CSRF_CONFIG.strategy,
     secret: config.csrf?.secret ?? generateCsrfSecret(),
     cookieName: config.csrf?.cookieName ?? DEFAULT_CSRF_CONFIG.cookieName,
