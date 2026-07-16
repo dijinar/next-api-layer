@@ -41,6 +41,12 @@ export type {
   AuditConfig,
   AuditEvent,
   AuditEventType,
+
+  // Refresh / validation config types
+  RefreshConfig,
+  ValidateConfig,
+  RefreshFailReason,
+  RefreshFailContext,
   
   // Data types
   TokenInfo,

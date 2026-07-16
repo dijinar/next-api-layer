@@ -373,6 +373,8 @@ const authProxy = createAuthProxy({
       'auth:success',
       'auth:fail',
       'auth:refresh',
+      'auth:refresh:fail',
+      'auth:reuse',
       'auth:guest',
       'access:denied',
       'csrf:fail',
@@ -406,6 +408,77 @@ interface AuditEvent {
   metadata?: Record<string, unknown>; // Additional context
 }
 ```
+
+### Token Refresh & Session Lifecycle
+
+Hardening for backends that rotate `jti` server-side and detect refresh-token reuse (RFC 9700). **Every option below is opt-in** — with no `refresh` / `validate` config, behaviour matches earlier versions.
+
+```ts
+const authProxy = createAuthProxy({
+  apiBaseUrl: process.env.API_BASE_URL!,
+  cookies: { user: 'userAuthToken', guest: 'guestAuthToken' },
+
+  access: {
+    protectedRoutes: ['/dashboard'],
+    // Never downgrade a failed user refresh to a guest session (admin panels).
+    guestFallbackOnUserRefreshFail: false,
+  },
+
+  refresh: {
+    // Coalesce concurrent refreshes (navigation + SWR + RSC) into one backend
+    // call — prevents orphan/bounce with server-side jti rotation. Default: true.
+    singleFlight: true,
+
+    // Renew before expiry instead of waiting for a 401.
+    proactive: true,
+    proactiveWindow: 120, // seconds before exp
+
+    // Reuse/theft detection → security telemetry, never a silent guest downgrade.
+    reuseStatusCodes: [409],
+    reuseCodes: ['token_reuse'],
+    onRefreshFail: (reason, req) => {
+      // reason: 'expired' | 'revoked' | 'reuse' | 'network' | 'unknown'
+      if (reason === 'reuse') notifySecurity(req); // e.g. "logged out on all devices"
+    },
+  },
+});
+```
+
+**Local JWT validation** — verify the token in the proxy instead of calling `auth/me` on every request (restores stateless auth):
+
+```ts
+createAuthProxy({
+  // ...base config
+  validate: {
+    mode: 'local',
+    secret: process.env.JWT_SECRET!,     // built-in HS256/384/512 (Web Crypto, no deps)
+    revalidateInterval: 60,              // still re-check the backend every 60s (revocation)
+    // Or plug your own verifier for RS256 / JWKS:
+    // verify: async (token) => { /* jose.jwtVerify(...) → TokenInfo | null */ },
+  },
+});
+```
+
+**Dual-token (OAuth2 access + refresh)** — short-lived access token plus a separate, path-scoped refresh token that rotates on use:
+
+```ts
+createAuthProxy({
+  apiBaseUrl: process.env.API_BASE_URL!,
+  cookies: {
+    user: 'accessToken',                 // short TTL, sent on every request
+    guest: 'guestToken',
+    refresh: 'refreshToken',             // enables dual-token mode
+    options: { maxAge: 60 * 15 },        // access: 15 min
+    refreshOptions: { path: '/api/auth/refresh', maxAge: 60 * 60 * 24 * 7 }, // refresh: 7 days
+  },
+  // Map the rotated refresh token from your backend's refresh response:
+  responseMappers: {
+    parseNewRefreshToken: (res: any) => res?.data?.refreshToken ?? null,
+  },
+});
+```
+
+> **Scope note:** Single-flight coalescing and local verification act **per runtime instance**. Across separate serverless/edge isolates, concurrent requests may still trigger independent refreshes — pair with idempotent refresh handling (a rotation grace window) on the backend for full coverage.
 
 ### Full Security Example
 
@@ -450,9 +523,11 @@ interface AuthProxyConfig {
   apiBaseUrl: string;           // Backend API URL
   
   cookies: {
-    user: string;               // User token cookie name
+    user: string;               // User (access) token cookie name
     guest: string;              // Guest token cookie name
+    refresh?: string;           // Refresh token cookie name — enables dual-token mode
     options?: CookieOptions;    // httpOnly, secure, sameSite, etc.
+    refreshOptions?: CookieOptions; // Options for the refresh cookie (e.g. path, maxAge)
   };
   
   endpoints?: {
@@ -473,8 +548,32 @@ interface AuthProxyConfig {
     protectedRoutes?: string[]; // Routes requiring auth
     authRoutes?: string[];      // Routes for non-auth users (login, register)
     publicRoutes?: string[];    // Completely public routes
+    // On a failed USER refresh, allow falling back to a guest token?
+    // Default: true. Set false to always force login (never downgrade).
+    // A detected token reuse never downgrades, regardless of this flag.
+    guestFallbackOnUserRefreshFail?: boolean;
     // Note: Locale prefix is automatically stripped before matching
     // e.g., '/tr/login' matches config '/login' when i18n is enabled
+  };
+
+  // ======== Token Refresh (all optional) ========
+  refresh?: {
+    singleFlight?: boolean;     // Coalesce concurrent refreshes. Default: true
+    proactive?: boolean;        // Refresh before expiry. Default: false
+    proactiveWindow?: number;   // Seconds before exp to refresh. Default: 120
+    reuseStatusCodes?: number[];// Statuses meaning token reuse. Default: [409]
+    reuseCodes?: string[];      // Body codes meaning reuse. Default: ['token_reuse']
+    classifyFail?: (ctx: { status: number; body: unknown }) => RefreshFailReason | undefined;
+    onRefreshFail?: (reason: RefreshFailReason, req: NextRequest) => void | Promise<void>;
+  };
+
+  // ======== Token Validation (all optional) ========
+  validate?: {
+    mode?: 'backend' | 'local'; // 'backend' (per-request auth/me) | 'local'. Default: 'backend'
+    secret?: string;            // HMAC secret for built-in HS256 local verification
+    algorithms?: Array<'HS256' | 'HS384' | 'HS512'>; // Default: ['HS256']
+    revalidateInterval?: number;// Local mode: re-check backend every N seconds. Default: 0 (never)
+    verify?: (token: string) => TokenInfo | null | Promise<TokenInfo | null>; // Custom (e.g. jose/JWKS)
   };
   
   cache?: {

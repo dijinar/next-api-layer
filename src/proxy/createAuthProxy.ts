@@ -12,7 +12,7 @@ import { createCsrfValidator } from './csrf';
 import { createRateLimiter } from './rateLimit';
 import type { RateLimitResult } from './rateLimit';
 import { createAuditLogger } from './audit';
-import { HEADERS } from '../shared/constants';
+import { HEADERS, REVALIDATE_COOKIE } from '../shared/constants';
 
 // Next.js encodes request-header overrides (set via
 // `NextResponse.next({ request: { headers } })`) as these response headers.
@@ -230,14 +230,15 @@ export function createAuthProxy(userConfig: AuthProxyConfig) {
   
   // Create validation functions
   const validation = createTokenValidation(config);
-  
-  // Create handlers
-  const handlers = createHandlers(config, validation);
 
-  // Create security modules
+  // Create security modules (audit is needed by the handlers for
+  // refresh-failure / reuse telemetry).
   const csrf = createCsrfValidator(config._resolved.csrf);
   const rateLimiter = createRateLimiter(config._resolved.rateLimit);
   const audit = createAuditLogger(config._resolved.audit);
+
+  // Create handlers
+  const handlers = createHandlers(config, validation, audit);
 
   /**
    * The middleware function
@@ -327,8 +328,13 @@ export function createAuthProxy(userConfig: AuthProxyConfig) {
       return applyMiddlewaresAndHooks(req, response, { isAuthenticated: false, isGuest: false, tokenType: null, user: null });
     }
 
-    // Validate token
-    const tokenInfo = await validation.getTokenInfo(currentToken);
+    // Validate token (backend per-request, or local JWT verification when
+    // `validate.mode: 'local'`, revalidating against the backend on interval).
+    const lastRevalidateRaw = req.cookies?.get(REVALIDATE_COOKIE)?.value;
+    const lastRevalidateAt = lastRevalidateRaw ? parseInt(lastRevalidateRaw, 10) || 0 : 0;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const resolved = await validation.resolveToken(currentToken, { lastRevalidateAt, now: nowSec });
+    const tokenInfo = resolved.info;
     
     // Build auth result for afterAuth hook
     const authResult: AuthResult = {
@@ -371,7 +377,16 @@ export function createAuthProxy(userConfig: AuthProxyConfig) {
     if (config._resolved.rateLimit.enabled && rateLimitResult) {
       finalResponse = rateLimiter.applyHeaders(finalResponse, rateLimitResult);
     }
-    
+
+    // Persist the last backend-revalidation time so `validate.mode: 'local'`
+    // with `revalidateInterval` can throttle backend checks across requests.
+    const validateCfg = config._resolved.validate;
+    if (validateCfg.mode === 'local' && validateCfg.revalidateInterval > 0 && resolved.revalidated) {
+      finalResponse.cookies.set(REVALIDATE_COOKIE, String(nowSec), {
+        ...config._resolved.cookieOptions,
+      });
+    }
+
     return finalResponse;
   }
   

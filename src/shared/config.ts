@@ -13,6 +13,8 @@ import type {
   ResolvedCsrfConfig,
   ResolvedRateLimitConfig,
   ResolvedAuditConfig,
+  ResolvedRefreshConfig,
+  ResolvedValidateConfig,
   AuditEventType,
 } from './types';
 
@@ -22,6 +24,8 @@ import {
   DEFAULT_CSRF_CONFIG,
   DEFAULT_RATE_LIMIT_CONFIG,
   DEFAULT_AUDIT_CONFIG,
+  DEFAULT_REFRESH_CONFIG,
+  DEFAULT_VALIDATE_CONFIG,
 } from './constants';
 import { DEFAULT_IP_HEADERS, getClientIp } from './ip';
 
@@ -80,6 +84,15 @@ export function resolveProxyConfig(config: AuthProxyConfig): InternalProxyConfig
     ...config.cookies.options,
   };
 
+  // Dual-token (OAuth2 access/refresh) mode is enabled by naming a refresh
+  // cookie. Its options default to the access-cookie options but are typically
+  // scoped to the refresh endpoint path with a longer lifetime.
+  const dualToken = !!config.cookies.refresh;
+  const refreshCookieOptions: ResolvedCookieOptions = {
+    ...cookieOptions,
+    ...config.cookies.refreshOptions,
+  };
+
   // Resolve endpoints
   const endpoints: Required<EndpointConfig> = {
     ...DEFAULT_ENDPOINTS,
@@ -130,15 +143,46 @@ export function resolveProxyConfig(config: AuthProxyConfig): InternalProxyConfig
     logger: config.audit?.logger,
   };
 
+  // Resolve refresh config
+  const refresh: ResolvedRefreshConfig = {
+    singleFlight: config.refresh?.singleFlight ?? DEFAULT_REFRESH_CONFIG.singleFlight,
+    proactive: config.refresh?.proactive ?? DEFAULT_REFRESH_CONFIG.proactive,
+    proactiveWindow: config.refresh?.proactiveWindow ?? DEFAULT_REFRESH_CONFIG.proactiveWindow,
+    reuseStatusCodes: config.refresh?.reuseStatusCodes ?? [...DEFAULT_REFRESH_CONFIG.reuseStatusCodes],
+    reuseCodes: config.refresh?.reuseCodes ?? [...DEFAULT_REFRESH_CONFIG.reuseCodes],
+    classifyFail: config.refresh?.classifyFail,
+    onRefreshFail: config.refresh?.onRefreshFail,
+  };
+
+  // Resolve validate config
+  const validateMode = config.validate?.mode ?? DEFAULT_VALIDATE_CONFIG.mode;
+  if (validateMode === 'local' && !config.validate?.secret && !config.validate?.verify) {
+    throw new Error(
+      'next-api-layer: validate.mode is "local" but neither validate.secret ' +
+      '(HS256) nor validate.verify (custom) is set.'
+    );
+  }
+  const validate: ResolvedValidateConfig = {
+    mode: validateMode,
+    secret: config.validate?.secret,
+    algorithms: config.validate?.algorithms ?? [...DEFAULT_VALIDATE_CONFIG.algorithms],
+    revalidateInterval: config.validate?.revalidateInterval ?? DEFAULT_VALIDATE_CONFIG.revalidateInterval,
+    verify: config.validate?.verify,
+  };
+
   return {
     ...config,
     apiBaseUrl,
     _resolved: {
       cookieOptions,
+      refreshCookieOptions,
+      dualToken,
       endpoints,
       csrf,
       rateLimit,
       audit,
+      refresh,
+      validate,
     },
   };
 }

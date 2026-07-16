@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-07-16
+
+This release hardens the **token refresh / session lifecycle** for backends that
+do server-side `jti` rotation and reuse-detection (RFC 9700). Every feature is
+**opt-in and backward compatible** — with no configuration, behaviour is
+identical to `0.3.0`.
+
+### Added
+
+- **Concurrent refresh single-flight (`refresh.singleFlight`, default `true`)**: Parallel requests (navigation + SWR polling + RSC fetches) that hit an expired token no longer each trigger their own refresh. They are coalesced so a single `auth/refresh` call runs and the rest await its result, eliminating the orphan/bounce that server-side `jti` rotation causes under concurrency. Coalescing is guaranteed within a single runtime instance. Set `false` to disable.
+- **Refresh-failure reason classification + `refresh.onRefreshFail` hook**: A failed refresh is now classified as `'expired' | 'revoked' | 'reuse' | 'network' | 'unknown'` (`RefreshResult.reason`). `refresh.onRefreshFail(reason, req)` fires for security telemetry / client notifications. Defaults: HTTP `409` or a body `{ code: 'token_reuse' }` → `reuse`; `401` → `expired`; `403` → `revoked`; transport error → `network`. Configurable via `refresh.reuseStatusCodes`, `refresh.reuseCodes`, and a custom `refresh.classifyFail`.
+- **Reuse-aware fail-closed (RFC 9700)**: A detected token **reuse** never silently downgrades to a guest session — it clears all auth cookies and redirects to login (or `401` for API routes), and emits an `auth:reuse` audit event. A new `auth:refresh:fail` audit event is emitted for other refresh failures.
+- **`access.guestFallbackOnUserRefreshFail` (default `true`)**: When `false`, a failed **user** refresh never downgrades to a guest token on any route (always terminal login / `401`). Protected routes already redirected to login; this documents and extends the guarantee to non-protected routes. This is the fail-closed switch for admin panels.
+- **Proactive (pre-expiry) refresh (`refresh.proactive`, `refresh.proactiveWindow`)**: Optionally renew a still-valid token when it is within `proactiveWindow` seconds (default `120`) of expiry, instead of waiting for a `401`. Best-effort: on failure the still-valid token continues to be used (a detected reuse remains terminal).
+- **Local JWT validation (`validate.mode: 'local'`)**: Verify the access token's signature + `exp` inside the proxy instead of calling the backend `auth/me` on every request, restoring stateless auth. Built-in HMAC verification (`HS256`/`HS384`/`HS512`) via the Web Crypto API (no dependencies), with `validate.secret` and `validate.algorithms`. Supply a custom `validate.verify` for RS256 / JWKS (e.g. `jose`). Optional `validate.revalidateInterval` re-checks against the backend at most every N seconds (revocation / allowlist), tracked via the non-sensitive `__nal_rv` cookie. Defaults to `mode: 'backend'` (per-request validation, unchanged).
+- **Dual-token mode (OAuth2 access + refresh)**: Set `cookies.refresh` (and optional `cookies.refreshOptions`, e.g. `path: '/api/auth/refresh'`, longer `maxAge`) to run a short-lived access token plus a separate long-lived refresh token that is only sent to the refresh endpoint. The refresh response may rotate the refresh token (`parseNewRefreshToken` mapper, default `data.refreshToken`); both cookies are updated on refresh.
+- **New exported types**: `RefreshConfig`, `ValidateConfig`, `RefreshFailReason`, `RefreshFailContext`.
+
+### Notes
+
+- No breaking changes. `createTokenValidation`'s `getTokenInfo` / `refreshToken` keep their existing signatures; all new behaviour is gated behind new opt-in config with `0.3.0`-equivalent defaults.
+- Single-flight and local verification act per runtime instance; across separate serverless/edge isolates, concurrent requests may still trigger independent refreshes.
+
 ## [0.3.0] - 2026-06-17
 
 This is a **security-hardening release**. It closes vulnerabilities across the

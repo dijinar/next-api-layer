@@ -55,6 +55,28 @@ export const HEADERS = {
   LOCALE: 'x-locale',
 } as const;
 
+// ==================== Refresh / Validate Defaults ====================
+
+export const DEFAULT_REFRESH_CONFIG = {
+  singleFlight: true,
+  proactive: false,
+  proactiveWindow: 120, // seconds
+  reuseStatusCodes: [409] as number[],
+  reuseCodes: ['token_reuse'] as string[],
+} as const;
+
+export const DEFAULT_VALIDATE_CONFIG = {
+  mode: 'backend' as const,
+  algorithms: ['HS256'] as Array<'HS256' | 'HS384' | 'HS512'>,
+  revalidateInterval: 0, // seconds; 0 = no periodic backend revalidation
+} as const;
+
+/**
+ * Cookie storing the epoch-seconds of the last backend revalidation, used by
+ * `validate.mode: 'local'` with `revalidateInterval`. Non-sensitive.
+ */
+export const REVALIDATE_COOKIE = '__nal_rv';
+
 // ==================== Sanitization Defaults ====================
 
 /**
@@ -94,6 +116,8 @@ export const DEFAULT_AUDIT_CONFIG = {
     'auth:success',
     'auth:fail',
     'auth:refresh',
+    'auth:refresh:fail',
+    'auth:reuse',
     'access:denied',
     'csrf:fail',
     'rateLimit:exceeded',

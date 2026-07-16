@@ -16,7 +16,18 @@ export interface CookieOptions {
 export interface CookieConfig {
   user: string;
   guest: string;
+  /**
+   * Optional refresh-token cookie name. Setting this enables the OAuth2-style
+   * dual-token mode: a short-lived access token (`user`) plus a separate,
+   * long-lived refresh token that is only sent to the refresh endpoint.
+   */
+  refresh?: string;
   options?: CookieOptions;
+  /**
+   * Cookie options for the refresh token (dual-token mode). Typically scoped
+   * with a narrow `path` (e.g. `/api/auth/refresh`) and a longer `maxAge`.
+   */
+  refreshOptions?: CookieOptions;
 }
 
 // ==================== Token Types ====================
@@ -29,9 +40,20 @@ export interface TokenInfo {
   timestamp?: number;
 }
 
+/**
+ * Why a refresh attempt failed. `reuse` signals a rotated (old) refresh token
+ * was replayed (RFC 9700 token theft) — the session family should be dropped
+ * and the user must never be silently downgraded to guest.
+ */
+export type RefreshFailReason = 'expired' | 'revoked' | 'reuse' | 'network' | 'unknown';
+
 export interface RefreshResult {
   success: boolean;
   newToken: string | null;
+  /** New refresh token when the backend rotates it (dual-token mode). */
+  newRefreshToken?: string | null;
+  /** Populated when `success` is false. */
+  reason?: RefreshFailReason;
 }
 
 // ==================== API Response Types ====================
@@ -91,6 +113,15 @@ export interface AccessConfig {
    * @default false
    */
   protectedByDefault?: boolean;
+  /**
+   * When a **user** token fails to refresh, whether the request may fall back
+   * to a guest token. On protected routes the user is always redirected to
+   * login regardless of this flag; this only controls non-protected routes.
+   * A detected token **reuse** never downgrades to guest, regardless of this
+   * flag.
+   * @default true (backward compatible)
+   */
+  guestFallbackOnUserRefreshFail?: boolean;
 }
 
 export interface I18nConfig {
@@ -159,6 +190,97 @@ export interface ResponseMappers {
    * @returns The guest access token or null
    */
   parseGuestToken?: (response: unknown) => string | null;
+
+  /**
+   * Parse the rotated refresh token from a refresh response (dual-token mode).
+   * @returns The new refresh token or null if none was rotated.
+   */
+  parseNewRefreshToken?: (response: unknown) => string | null;
+}
+
+/** Raw refresh-endpoint failure passed to a custom classifier. */
+export interface RefreshFailContext {
+  /** HTTP status of the refresh response (0 for a network/transport error). */
+  status: number;
+  /** Parsed JSON body of the refresh response, if any. */
+  body: unknown;
+}
+
+/**
+ * Token refresh behaviour: concurrent single-flight, proactive (pre-expiry)
+ * refresh, and reuse/theft classification (RFC 9700).
+ */
+export interface RefreshConfig {
+  /**
+   * De-duplicate concurrent refreshes for the same token so only one request
+   * hits the backend and the rest await its result. Prevents orphan/bounce
+   * with server-side `jti` rotation. Effective within a single runtime
+   * instance.
+   * @default true
+   */
+  singleFlight?: boolean;
+  /**
+   * Refresh proactively when the access token is within `proactiveWindow`
+   * seconds of expiry, instead of waiting for a 401.
+   * @default false
+   */
+  proactive?: boolean;
+  /**
+   * Seconds before expiry at which a proactive refresh triggers.
+   * @default 120
+   */
+  proactiveWindow?: number;
+  /**
+   * HTTP status codes from the refresh endpoint that indicate a replayed
+   * (rotated) refresh token \u2014 token theft. Classified as `reuse`.
+   * @default [409]
+   */
+  reuseStatusCodes?: number[];
+  /**
+   * Body `code` values that indicate token reuse (e.g. `token_reuse`).
+   * @default ['token_reuse']
+   */
+  reuseCodes?: string[];
+  /**
+   * Custom classifier for a failed refresh. Overrides the built-in status/code
+   * mapping when it returns a reason.
+   */
+  classifyFail?: (ctx: RefreshFailContext) => RefreshFailReason | undefined;
+  /**
+   * Invoked when a refresh fails. Use for security telemetry / notifying the
+   * client ("logged out on all devices"). A `reuse` reason never falls back to
+   * a guest token.
+   */
+  onRefreshFail?: (reason: RefreshFailReason, req: NextRequest) => void | Promise<void>;
+}
+
+/**
+ * Token validation strategy. `local` verifies the JWT signature + `exp` in the
+ * proxy and only calls the backend on a schedule, restoring stateless auth.
+ */
+export interface ValidateConfig {
+  /**
+   * `'backend'` (default) calls the validate endpoint on every request.
+   * `'local'` verifies the JWT locally and only revalidates against the
+   * backend every `revalidateInterval` seconds (and on refresh).
+   * @default 'backend'
+   */
+  mode?: 'backend' | 'local';
+  /** HMAC secret for built-in HS256 local verification. */
+  secret?: string;
+  /** Algorithms accepted by the built-in verifier. @default ['HS256'] */
+  algorithms?: Array<'HS256' | 'HS384' | 'HS512'>;
+  /**
+   * In `local` mode, re-check the token against the backend at most once every
+   * N seconds. `0` disables periodic revalidation (pure local until expiry).
+   * @default 0
+   */
+  revalidateInterval?: number;
+  /**
+   * Custom verifier (e.g. `jose` with RS256/JWKS). Overrides the built-in
+   * HS256 verifier; return a `TokenInfo` or `null`/throw when invalid.
+   */
+  verify?: (token: string) => Promise<TokenInfo | null> | TokenInfo | null;
 }
 
 export interface AuthProxyConfig {
@@ -194,6 +316,17 @@ export interface AuthProxyConfig {
    * For security monitoring and compliance
    */
   audit?: AuditConfig;
+
+  /**
+   * Token refresh behaviour: concurrent single-flight, proactive (pre-expiry)
+   * refresh, and reuse/theft classification (RFC 9700).
+   */
+  refresh?: RefreshConfig;
+
+  /**
+   * Token validation strategy (backend-per-request vs. local JWT verification).
+   */
+  validate?: ValidateConfig;
   
   /**
    * Custom response parsers for different backend formats.
@@ -409,6 +542,8 @@ export type AuditEventType =
   | 'auth:success' 
   | 'auth:fail' 
   | 'auth:refresh' 
+  | 'auth:refresh:fail'
+  | 'auth:reuse'
   | 'auth:guest'
   | 'access:denied' 
   | 'csrf:fail' 
@@ -457,12 +592,34 @@ export interface ResolvedAuditConfig {
   logger?: (event: AuditEvent) => void | Promise<void>;
 }
 
+export interface ResolvedRefreshConfig {
+  singleFlight: boolean;
+  proactive: boolean;
+  proactiveWindow: number;
+  reuseStatusCodes: number[];
+  reuseCodes: string[];
+  classifyFail?: (ctx: RefreshFailContext) => RefreshFailReason | undefined;
+  onRefreshFail?: (reason: RefreshFailReason, req: NextRequest) => void | Promise<void>;
+}
+
+export interface ResolvedValidateConfig {
+  mode: 'backend' | 'local';
+  secret?: string;
+  algorithms: Array<'HS256' | 'HS384' | 'HS512'>;
+  revalidateInterval: number;
+  verify?: (token: string) => Promise<TokenInfo | null> | TokenInfo | null;
+}
+
 export interface InternalProxyConfig extends AuthProxyConfig {
   _resolved: {
     cookieOptions: ResolvedCookieOptions;
+    refreshCookieOptions: ResolvedCookieOptions;
+    dualToken: boolean;
     endpoints: Required<EndpointConfig>;
     csrf: ResolvedCsrfConfig;
     rateLimit: ResolvedRateLimitConfig;
     audit: ResolvedAuditConfig;
+    refresh: ResolvedRefreshConfig;
+    validate: ResolvedValidateConfig;
   };
 }

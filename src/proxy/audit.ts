@@ -96,6 +96,20 @@ export function createAuditLogger(config: ResolvedAuditConfig) {
   }
 
   /**
+   * Log a failed token refresh (with reason).
+   */
+  function authRefreshFail(req: NextRequest, metadata?: Record<string, unknown>) {
+    return emit('auth:refresh:fail', req, { success: false, metadata });
+  }
+
+  /**
+   * Log a detected refresh-token reuse / theft (RFC 9700).
+   */
+  function authReuse(req: NextRequest, metadata?: Record<string, unknown>) {
+    return emit('auth:reuse', req, { success: false, metadata });
+  }
+
+  /**
    * Log access denied
    */
   function accessDenied(req: NextRequest, userId?: string, metadata?: Record<string, unknown>) {
@@ -138,6 +152,8 @@ export function createAuditLogger(config: ResolvedAuditConfig) {
     authFail,
     authRefresh,
     authGuest,
+    authRefreshFail,
+    authReuse,
     accessDenied,
     csrfFail,
     rateLimitExceeded,
