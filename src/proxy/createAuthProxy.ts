@@ -299,20 +299,14 @@ export function createAuthProxy(userConfig: AuthProxyConfig) {
     // Skip excluded paths
     const excludedPaths = config.excludedPaths ?? [];
     if (excludedPaths.some(path => pathname.startsWith(path))) {
-      return applyMiddlewaresAndHooks(req, nextWithSanitizedHeaders(req), { isAuthenticated: false, isGuest: false, tokenType: null, user: null });
+      return applyMiddlewaresAndHooks(req, nextWithSanitizedHeaders(req), { isAuthenticated: false, isGuest: false, tokenType: null, user: null, bypassed: 'excluded' });
     }
 
-    // Skip auth API endpoints (they handle their own auth)
-    const authApiPaths = [
-      '/api/auth/login',
-      '/api/auth/logout',
-      '/api/auth/me',
-      '/api/auth/refresh',
-      '/api/auth/register',
-    ];
-    
-    if (authApiPaths.includes(pathname)) {
-      return applyMiddlewaresAndHooks(req, nextWithSanitizedHeaders(req), { isAuthenticated: false, isGuest: false, tokenType: null, user: null });
+    // Skip auth API endpoints (they handle their own auth). Configurable via
+    // `authApi.bypassPaths`: dropping a path from the list (typically
+    // `/api/auth/me`) routes it through the normal validation + refresh flow.
+    if (config._resolved.authApiBypassPaths.includes(pathname)) {
+      return applyMiddlewaresAndHooks(req, nextWithSanitizedHeaders(req), { isAuthenticated: false, isGuest: false, tokenType: null, user: null, bypassed: 'auth-api' });
     }
 
     // Get tokens from cookies

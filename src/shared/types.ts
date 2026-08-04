@@ -145,6 +145,12 @@ export interface AuthResult {
   isGuest: boolean;
   tokenType: string | null;
   user: Record<string, unknown> | null;
+  /**
+   * Set when the proxy skipped auth for this request, so `afterAuth` can tell a
+   * bypassed request apart from a genuinely anonymous one. Undefined means the
+   * request went through the normal validation pipeline.
+   */
+  bypassed?: 'excluded' | 'auth-api';
 }
 
 /**
@@ -207,6 +213,58 @@ export interface RefreshFailContext {
 }
 
 /**
+ * Which auth API routes the proxy skips entirely.
+ *
+ * Bypassed paths get **no** token validation, refresh, single-flight,
+ * proactive renewal or reuse detection. `/api/auth/login` and
+ * `/api/auth/register` must stay bypassed (no token yet) and
+ * `/api/auth/refresh` should stay bypassed (it performs the refresh itself),
+ * but `/api/auth/me` is usually better served by the normal pipeline so an
+ * expired token is refreshed transparently instead of returning 401.
+ */
+export interface AuthApiConfig {
+  /**
+   * Exact paths the proxy skips entirely. Replaces the default list, so include
+   * every path that must stay bypassed: dropping the login/register routes
+   * blocks sign-in (no token exists yet), and dropping the refresh route makes
+   * the proxy refresh the token before the refresh route runs, rotating it
+   * twice.
+   *
+   * @default ['/api/auth/login', '/api/auth/logout', '/api/auth/me', '/api/auth/refresh', '/api/auth/register']
+   */
+  bypassPaths?: string[];
+}
+
+/**
+ * Shared store used to reuse a refresh result **across** runtime instances
+ * (PM2 cluster, Passenger, Docker replicas, serverless/edge isolates), where
+ * the in-memory single-flight map cannot help.
+ *
+ * Best-effort, not a distributed mutex: `get` and `set` are not atomic, so two
+ * instances that miss the store at the exact same moment still refresh
+ * independently. It removes the far more common near-miss case (one instance
+ * refreshes, another retries moments later with the same old token) and should
+ * be paired with idempotent refresh handling on the backend.
+ *
+ * Keys are SHA-256 hashes of the old token, never the token itself. Values hold
+ * freshly issued tokens for a short TTL, so back the store with a secured
+ * service (e.g. an authenticated Redis) and keep the TTL small. Persist the
+ * value verbatim -- it carries an absolute expiry that the library re-checks on
+ * read, and entries missing it are discarded.
+ */
+export interface RefreshResultStore {
+  get(key: string): Promise<StoredRefreshResult | null> | StoredRefreshResult | null;
+  set(key: string, value: StoredRefreshResult, ttlMs: number): Promise<void> | void;
+}
+
+export interface StoredRefreshResult {
+  accessToken: string;
+  refreshToken?: string | null;
+  /** Absolute epoch-ms expiry, enforced on read regardless of adapter TTL support. */
+  expiresAt: number;
+}
+
+/**
  * Token refresh behaviour: concurrent single-flight, proactive (pre-expiry)
  * refresh, and reuse/theft classification (RFC 9700).
  */
@@ -252,6 +310,19 @@ export interface RefreshConfig {
    * a guest token.
    */
   onRefreshFail?: (reason: RefreshFailReason, req: NextRequest) => void | Promise<void>;
+  /**
+   * Shared store that lets another instance's recent refresh result be reused
+   * instead of issuing a second refresh (which a backend with reuse detection
+   * would flag as theft). Best-effort across instances -- see
+   * {@link RefreshResultStore}.
+   */
+  store?: RefreshResultStore;
+  /**
+   * How long a refresh result stays reusable in `store`. Keep it above the
+   * expected request skew and below the new token's lifetime.
+   * @default 60000
+   */
+  storeTtlMs?: number;
 }
 
 /**
@@ -327,6 +398,11 @@ export interface AuthProxyConfig {
    * Token validation strategy (backend-per-request vs. local JWT verification).
    */
   validate?: ValidateConfig;
+
+  /**
+   * Which auth API routes the proxy skips entirely.
+   */
+  authApi?: AuthApiConfig;
   
   /**
    * Custom response parsers for different backend formats.
@@ -600,6 +676,8 @@ export interface ResolvedRefreshConfig {
   reuseCodes: string[];
   classifyFail?: (ctx: RefreshFailContext) => RefreshFailReason | undefined;
   onRefreshFail?: (reason: RefreshFailReason, req: NextRequest) => void | Promise<void>;
+  store?: RefreshResultStore;
+  storeTtlMs: number;
 }
 
 export interface ResolvedValidateConfig {
@@ -621,5 +699,6 @@ export interface InternalProxyConfig extends AuthProxyConfig {
     audit: ResolvedAuditConfig;
     refresh: ResolvedRefreshConfig;
     validate: ResolvedValidateConfig;
+    authApiBypassPaths: string[];
   };
 }

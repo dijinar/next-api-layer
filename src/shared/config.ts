@@ -26,6 +26,7 @@ import {
   DEFAULT_AUDIT_CONFIG,
   DEFAULT_REFRESH_CONFIG,
   DEFAULT_VALIDATE_CONFIG,
+  DEFAULT_AUTH_BYPASS_PATHS,
 } from './constants';
 import { DEFAULT_IP_HEADERS, getClientIp } from './ip';
 
@@ -152,6 +153,8 @@ export function resolveProxyConfig(config: AuthProxyConfig): InternalProxyConfig
     reuseCodes: config.refresh?.reuseCodes ?? [...DEFAULT_REFRESH_CONFIG.reuseCodes],
     classifyFail: config.refresh?.classifyFail,
     onRefreshFail: config.refresh?.onRefreshFail,
+    store: config.refresh?.store,
+    storeTtlMs: config.refresh?.storeTtlMs ?? DEFAULT_REFRESH_CONFIG.storeTtlMs,
   };
 
   // Resolve validate config
@@ -183,6 +186,7 @@ export function resolveProxyConfig(config: AuthProxyConfig): InternalProxyConfig
       audit,
       refresh,
       validate,
+      authApiBypassPaths: config.authApi?.bypassPaths ?? [...DEFAULT_AUTH_BYPASS_PATHS],
     },
   };
 }

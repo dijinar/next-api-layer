@@ -47,6 +47,9 @@ export type {
   ValidateConfig,
   RefreshFailReason,
   RefreshFailContext,
+  RefreshResultStore,
+  StoredRefreshResult,
+  AuthApiConfig,
   
   // Data types
   TokenInfo,
@@ -64,6 +67,9 @@ export {
   DEFAULT_CSRF_CONFIG,
   DEFAULT_RATE_LIMIT_CONFIG,
   DEFAULT_AUDIT_CONFIG,
+  DEFAULT_REFRESH_CONFIG,
+  DEFAULT_VALIDATE_CONFIG,
+  DEFAULT_AUTH_BYPASS_PATHS,
   ERROR_MESSAGES,
   HEADERS,
   TOKEN_TYPES,

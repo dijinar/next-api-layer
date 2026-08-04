@@ -13,7 +13,7 @@ import type {
   ResponseMappers,
 } from '../shared/types';
 import { localVerifyToken } from './jwt';
-import { createSingleFlight } from './refreshManager';
+import { createSingleFlight, hashToken } from './refreshManager';
 
 /**
  * Default response parsers (standard format)
@@ -247,14 +247,59 @@ export function createTokenValidation(
     return doRefresh(oldToken);
   }
 
+  /** A store adapter — or a throwing `onError` hook — must never fail the request. */
+  function reportStoreError(error: unknown): void {
+    try {
+      config.onError?.(error instanceof Error ? error : new Error(String(error)));
+    } catch {
+      // Reporting is best-effort.
+    }
+  }
+
+  /**
+   * Reads a refresh result another instance produced for the same token.
+   * Store failures are non-fatal: refreshing is always better than throwing.
+   */
+  async function readSharedResult(oldToken: string): Promise<RefreshResult | null> {
+    if (!refreshCfg.store) return null;
+    try {
+      const stored = await refreshCfg.store.get(await hashToken(oldToken));
+      if (!stored?.accessToken) return null;
+      // Enforce the TTL here too, so an adapter that ignores it cannot turn an
+      // old token into a long-lived bridge to a valid one.
+      if (typeof stored.expiresAt !== 'number' || stored.expiresAt <= Date.now()) return null;
+      return { success: true, newToken: stored.accessToken, newRefreshToken: stored.refreshToken ?? null };
+    } catch (error) {
+      reportStoreError(error);
+      return null;
+    }
+  }
+
+  async function writeSharedResult(oldToken: string, result: RefreshResult): Promise<void> {
+    if (!refreshCfg.store || !result.newToken) return;
+    try {
+      await refreshCfg.store.set(
+        await hashToken(oldToken),
+        {
+          accessToken: result.newToken,
+          refreshToken: result.newRefreshToken ?? null,
+          expiresAt: Date.now() + refreshCfg.storeTtlMs,
+        },
+        refreshCfg.storeTtlMs
+      );
+    } catch (error) {
+      // The refresh itself succeeded; only cross-instance reuse is lost.
+      reportStoreError(error);
+    }
+  }
+
   /**
    * Refreshes a session with concurrent single-flight coalescing and validates
    * the resulting token once, so parallel requests share a single backend
    * roundtrip and all continue with the same new token (no orphan/bounce).
    */
   async function refreshSession(oldToken: string): Promise<RefreshOutcome> {
-    const producer = async (): Promise<RefreshOutcome> => {
-      const result = await doRefresh(oldToken);
+    const finalize = async (result: RefreshResult): Promise<RefreshOutcome> => {
       if (!result.success || !result.newToken) {
         return { ...result, tokenInfo: null };
       }
@@ -263,6 +308,24 @@ export function createTokenValidation(
       // call), treating it as just-revalidated so no extra backend hit occurs.
       const { info } = await resolveToken(result.newToken, { lastRevalidateAt: nowSec, now: nowSec });
       return { ...result, tokenInfo: info.isValid ? info : null };
+    };
+
+    const producer = async (): Promise<RefreshOutcome> => {
+      const shared = await readSharedResult(oldToken);
+      if (shared) {
+        const reused = await finalize(shared);
+        // A stale entry (token already expired/revoked) falls through to a real refresh.
+        if (reused.tokenInfo) return reused;
+      }
+
+      const result = await doRefresh(oldToken);
+      const outcome = await finalize(result);
+      // Only share a token that actually validated, otherwise every reader
+      // would pay for the same failed validation before refreshing anyway.
+      if (outcome.tokenInfo) {
+        await writeSharedResult(oldToken, result);
+      }
+      return outcome;
     };
 
     if (refreshCfg.singleFlight) {

@@ -7,8 +7,10 @@
  * orphan/bounce that server-side `jti` rotation causes under concurrency.
  *
  * Scope: the in-flight map lives in module memory, so coalescing is guaranteed
- * only within a single runtime instance. Across separate serverless/edge
- * isolates, concurrent requests may still trigger independent refreshes.
+ * only within a single runtime instance. Separate processes or instances --
+ * PM2 cluster workers, Passenger, Docker replicas, serverless/edge isolates --
+ * each keep their own map and may still refresh independently; configure
+ * `refresh.store` to coalesce across them.
  */
 export function createSingleFlight<T>() {
   const inFlight = new Map<string, Promise<T>>();
@@ -29,3 +31,14 @@ export function createSingleFlight<T>() {
 }
 
 export type SingleFlight<T> = ReturnType<typeof createSingleFlight<T>>;
+
+/**
+ * Derives an opaque key for a token, so a shared refresh store never holds the
+ * token itself in its keyspace.
+ */
+export async function hashToken(token: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+  return Array.from(new Uint8Array(digest))
+    .map(byte => byte.toString(16).padStart(2, '0'))
+    .join('');
+}

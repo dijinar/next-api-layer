@@ -5,12 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-08-04
+
+`0.4.0` hardened the refresh pipeline, but the proxy skipped `/api/auth/*` on a
+hard-coded list, so none of that hardening applied to the very routes that need
+it — including `/api/auth/me`, which this library's own `AuthProvider` polls.
+An expired token returned `401` there instead of being refreshed. This release
+makes that list configurable and adds cross-instance refresh reuse. Defaults are
+unchanged: with no new configuration the proxy bypasses exactly the same paths
+and takes the same code path as `0.4.0`. The only visible difference is the
+additional `bypassed` field `afterAuth` now receives on those requests.
+
+### Added
+
+- **Configurable auth-API bypass (`authApi.bypassPaths`)**: The paths the proxy skips entirely are no longer hard-coded. The default remains `['/api/auth/login', '/api/auth/logout', '/api/auth/me', '/api/auth/refresh', '/api/auth/register']`. Removing `/api/auth/me` from the list routes it through the normal validation pipeline, so an expired token is refreshed transparently (single-flight, proactive renewal, reuse detection and `onRefreshFail` all apply) and the request continues with the new token instead of returning `401`. Keep the login, register and refresh routes listed: the first two carry no token yet, and validating the refresh route would rotate the token before the route itself runs.
+- **`AuthResult.bypassed`**: `afterAuth` now receives `bypassed: 'excluded' | 'auth-api'` when the proxy skipped auth for that request, so a bypassed request can be told apart from a genuinely anonymous one (`if (authResult.bypassed) return response;`). It is `undefined` on requests that went through validation.
+- **Shared refresh-result store (`refresh.store`, `refresh.storeTtlMs`)**: An optional pluggable store (e.g. Redis) that lets one instance reuse a refresh another instance just performed, instead of issuing a second one that a backend with reuse detection would flag as theft. Store keys are SHA-256 hashes of the old token — never the token itself — and each entry carries an absolute expiry that the library re-checks on read, so an adapter that ignores the TTL (default `60000` ms) cannot turn an old token into a long-lived bridge to a valid one. Stale or unreadable entries fall through to a normal refresh, and store errors are reported via `onError` rather than swallowed.
+- **New exported types**: `AuthApiConfig`, `RefreshResultStore`, `StoredRefreshResult`.
+- **New exported constants**: `DEFAULT_REFRESH_CONFIG`, `DEFAULT_VALIDATE_CONFIG` and `DEFAULT_AUTH_BYPASS_PATHS`, alongside the constants already exported for advanced usage. The last one lets you derive a bypass list instead of retyping it: `bypassPaths: DEFAULT_AUTH_BYPASS_PATHS.filter(p => p !== '/api/auth/me')`.
+
+### Fixed
+
+- **Guest token was invisible to the request that minted it**: When `guestToken.enabled` created a token for an API route, it was only written to the response cookie, so `createApiClient` running in that same request found no token and returned `401`; it only worked from the next request onwards. The token is now also forwarded downstream via the verified `x-refreshed-token` header, matching the existing user-refresh path.
+
+### Notes
+
+- No breaking changes. `authApi`, `refresh.store` and `AuthResult.bypassed` are additive, and the default bypass list reproduces `0.4.0` behaviour exactly.
+- `refresh.store` is best-effort, not a distributed mutex: `get` and `set` are not atomic, so two instances that miss the store at the same moment still refresh independently. It removes the far more common near-miss case (one instance refreshes, another retries moments later with the same old token). Single-flight coalescing and local verification remain per runtime instance — PM2 cluster workers, Passenger, Docker replicas and serverless/edge isolates each keep their own in-memory map. For full coverage, pair either mechanism with idempotent refresh handling on the backend (a rotation grace window, and acceptance of the previous `jti` for that window).
+
 ## [0.4.0] - 2026-07-16
 
 This release hardens the **token refresh / session lifecycle** for backends that
-do server-side `jti` rotation and reuse-detection (RFC 9700). Every feature is
-**opt-in and backward compatible** — with no configuration, behaviour is
-identical to `0.3.0`.
+do server-side `jti` rotation and reuse-detection (RFC 9700). Every new field is
+**optional and backward compatible**, with one exception: concurrent refresh
+single-flight is enabled by default (`refresh.singleFlight: true`). Set it to
+`false` to restore independent per-request refreshes.
 
 ### Added
 
@@ -25,7 +54,7 @@ identical to `0.3.0`.
 
 ### Notes
 
-- No breaking changes. `createTokenValidation`'s `getTokenInfo` / `refreshToken` keep their existing signatures; all new behaviour is gated behind new opt-in config with `0.3.0`-equivalent defaults.
+- No breaking changes. `createTokenValidation`'s `getTokenInfo` / `refreshToken` keep their existing signatures; every new field is optional, though `refresh.singleFlight` defaults to `true` — set `refresh.singleFlight: false` to opt out.
 - Single-flight and local verification act per runtime instance; across separate serverless/edge isolates, concurrent requests may still trigger independent refreshes.
 
 ## [0.3.0] - 2026-06-17

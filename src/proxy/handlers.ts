@@ -291,9 +291,13 @@ export function createHandlers(
       
       if (guestAccessToken) {
         let response: NextResponse;
-        
+
         if (isApiRoute) {
-          response = nextWithSanitizedHeaders(req);
+          // Forward the freshly minted token on this same request, otherwise the
+          // downstream handler only sees it from the next request onwards.
+          const requestHeaders = sanitizeRequestHeaders(req);
+          requestHeaders.set(HEADERS.REFRESHED_TOKEN, guestAccessToken);
+          response = NextResponse.next({ request: { headers: requestHeaders } });
         } else if (isProtectedRoute(req.nextUrl.pathname)) {
           // Redirect to login if protected route
           response = NextResponse.redirect(new URL('/login', origin));

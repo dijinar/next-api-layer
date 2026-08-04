@@ -411,7 +411,7 @@ interface AuditEvent {
 
 ### Token Refresh & Session Lifecycle
 
-Hardening for backends that rotate `jti` server-side and detect refresh-token reuse (RFC 9700). **Every option below is opt-in** — with no `refresh` / `validate` config, behaviour matches earlier versions.
+Hardening for backends that rotate `jti` server-side and detect refresh-token reuse (RFC 9700). Every option below is optional and backward compatible, with one exception: concurrent refresh single-flight is enabled by default (`refresh.singleFlight: true`).
 
 ```ts
 const authProxy = createAuthProxy({
@@ -478,7 +478,58 @@ createAuthProxy({
 });
 ```
 
-> **Scope note:** Single-flight coalescing and local verification act **per runtime instance**. Across separate serverless/edge isolates, concurrent requests may still trigger independent refreshes — pair with idempotent refresh handling (a rotation grace window) on the backend for full coverage.
+**Auth API routes** — by default the proxy skips `/api/auth/login`, `/api/auth/logout`, `/api/auth/me`, `/api/auth/refresh` and `/api/auth/register` entirely, so none of the options above apply to them. `/api/auth/me` is usually better served by the normal pipeline: it is the route `AuthProvider` polls, and on the default list an expired token simply returns `401` there instead of being refreshed.
+
+```ts
+createAuthProxy({
+  // ...base config
+  authApi: {
+    // Replaces the default list — keep every path that must stay bypassed.
+    // Login/register carry no token yet, and validating the refresh route
+    // would rotate the token before the route itself runs.
+    bypassPaths: [
+      '/api/auth/login',
+      '/api/auth/logout',
+      '/api/auth/refresh',
+      '/api/auth/register',
+    ],
+  },
+});
+```
+
+With `/api/auth/me` off the list, an expired token triggers a single refresh, the new token is written to the cookie **and** forwarded downstream via `x-refreshed-token`, and the route returns `200` — no client-side `401` handling required.
+
+`afterAuth` can tell a skipped request apart from an anonymous one:
+
+```ts
+afterAuth: (req, response, authResult) => {
+  if (authResult.bypassed) return response; // 'excluded' | 'auth-api'
+  // ...your guard
+  return response;
+},
+```
+
+**Sharing refresh results across instances** — the in-memory single-flight map is per runtime instance. Supply a store so one instance can reuse a refresh another just performed, instead of issuing a second one that a backend with reuse detection would flag as theft:
+
+```ts
+createAuthProxy({
+  // ...base config
+  refresh: {
+    storeTtlMs: 60_000, // default
+    store: {
+      // Persist the value verbatim: it carries an absolute expiry the library re-checks.
+      get: async (key) => JSON.parse((await redis.get(key)) ?? 'null'),
+      set: async (key, value, ttlMs) => {
+        await redis.set(key, JSON.stringify(value), 'PX', ttlMs);
+      },
+    },
+  },
+});
+```
+
+Keys are SHA-256 hashes of the old token, never the token itself. Values hold freshly issued tokens for `storeTtlMs`, so back the store with a secured service and keep the TTL small. Stale entries fall through to a normal refresh, and store errors are reported via `onError` without failing the request.
+
+> **Scope note:** `refresh.store` is best-effort, not a distributed mutex — `get` and `set` are not atomic, so two instances that miss the store at the same moment still refresh independently. Single-flight coalescing and local verification act **per runtime instance**: PM2 cluster workers, Passenger, Docker replicas and serverless/edge isolates each keep their own map. For full coverage, pair either mechanism with idempotent refresh handling on the backend — a rotation grace window, and acceptance of the previous `jti` for that window, chosen larger than your refresh latency.
 
 ### Full Security Example
 
@@ -565,6 +616,8 @@ interface AuthProxyConfig {
     reuseCodes?: string[];      // Body codes meaning reuse. Default: ['token_reuse']
     classifyFail?: (ctx: { status: number; body: unknown }) => RefreshFailReason | undefined;
     onRefreshFail?: (reason: RefreshFailReason, req: NextRequest) => void | Promise<void>;
+    store?: RefreshResultStore; // Share refresh results across instances (e.g. Redis)
+    storeTtlMs?: number;        // How long a stored result stays reusable. Default: 60000
   };
 
   // ======== Token Validation (all optional) ========
@@ -575,10 +628,13 @@ interface AuthProxyConfig {
     revalidateInterval?: number;// Local mode: re-check backend every N seconds. Default: 0 (never)
     verify?: (token: string) => TokenInfo | null | Promise<TokenInfo | null>; // Custom (e.g. jose/JWKS)
   };
-  
-  cache?: {
-    ttl?: number;               // Default: 2000ms
-    maxSize?: number;           // Default: 100 tokens
+
+  // ======== Auth API Routes (optional) ========
+  authApi?: {
+    // Exact paths the proxy skips entirely. Replaces the default list below.
+    // Default: ['/api/auth/login', '/api/auth/logout', '/api/auth/me',
+    //           '/api/auth/refresh', '/api/auth/register']
+    bypassPaths?: string[];
   };
   
   i18n?: {
@@ -603,6 +659,8 @@ interface AuthResult {
   isGuest: boolean;             // true if guest token
   tokenType: string | null;     // 'user', 'guest', etc.
   user: Record<string, unknown> | null;  // User data from token validation
+  // Set when the proxy skipped auth for this request; undefined otherwise.
+  bypassed?: 'excluded' | 'auth-api';
 }
 ```
 
@@ -1211,7 +1269,6 @@ import { createProxyHandler } from 'next-api-layer';
 const handler = createProxyHandler({
   apiBaseUrl: process.env.API_BASE_URL!,
   publicEndpoints: ['news/*', 'categories', 'public/**'],
-  debug: process.env.NODE_ENV === 'development',
 });
 
 export const GET = handler;

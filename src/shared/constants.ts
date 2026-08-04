@@ -63,7 +63,22 @@ export const DEFAULT_REFRESH_CONFIG = {
   proactiveWindow: 120, // seconds
   reuseStatusCodes: [409] as number[],
   reuseCodes: ['token_reuse'] as string[],
+  storeTtlMs: 60_000,
 } as const;
+
+/**
+ * Auth API routes the proxy skips by default. Override via `authApi.bypassPaths`;
+ * dropping `/api/auth/me` from the list makes the proxy validate and refresh it
+ * like any other route. `/api/auth/refresh` should stay listed, otherwise the
+ * proxy would refresh the token before the refresh route itself runs.
+ */
+export const DEFAULT_AUTH_BYPASS_PATHS = [
+  '/api/auth/login',
+  '/api/auth/logout',
+  '/api/auth/me',
+  '/api/auth/refresh',
+  '/api/auth/register',
+] as const;
 
 export const DEFAULT_VALIDATE_CONFIG = {
   mode: 'backend' as const,
